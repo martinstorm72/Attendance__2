@@ -2895,7 +2895,7 @@
           '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' +
           '<input id="student-search" type="text" placeholder="ابحث عن مخدوم…" autocomplete="off" ' +
           'style="flex:1;background:none;border:none;outline:none;color:var(--white);font-size:14px;font-family:\'Cairo\',\'Tajawal\',sans-serif;direction:rtl;" ' +
-          'oninput="filterStudents(this.value)">' +
+          'oninput="markUserWorking();filterStudents(this.value)">' +
           '<button id="search-clear" onclick="clearSearch()" style="display:none;background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 2px;line-height:1;">✕</button>' +
           '</div>' +
           '</div>' +
@@ -3844,14 +3844,27 @@
     function markUserWorking() {
       _userIsWorking = true;
       if (_workingTimer) clearTimeout(_workingTimer);
+      // Keep the "working" flag alive for 30s after the last keystroke/interaction
       _workingTimer = setTimeout(function () {
         _userIsWorking = false;
         if (_pendingRemoteRefresh) {
           _pendingRemoteRefresh = false;
           onRemoteChange();
         }
-      }, 15000);
+      }, 30000);
     }
+
+    // Also mark user working whenever any input/textarea has focus
+    document.addEventListener('focusin', function (e) {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+        markUserWorking();
+      }
+    });
+    document.addEventListener('focusout', function (e) {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+        // Let the working timer expire naturally — don't cancel early on blur
+      }
+    });
 
     // Called after any remote data pull — re-renders the active screen
     function onRemoteChange() {
@@ -3862,8 +3875,13 @@
       if (!active) return;
       var aid = active.id;
 
-      if (_userIsWorking && aid === 'screen-class') {
+      // Never disrupt the user while they're typing in any input/textarea
+      var focusedEl = document.activeElement;
+      var userIsTyping = focusedEl && (focusedEl.tagName === 'INPUT' || focusedEl.tagName === 'TEXTAREA');
+
+      if (_userIsWorking || userIsTyping) {
         _pendingRemoteRefresh = true;
+        // Only update in-memory student list silently (no re-render)
         if (currentClassId) {
           var clsW = CLASSES.find(function (c) { return c.id === currentClassId; });
           if (clsW) clsW.students.forEach(function (s) { if (!(s in sessionData)) sessionData[s] = 'unmarked'; });
@@ -3874,7 +3892,7 @@
       if (aid === 'screen-home') { renderHome(); }
       else if (aid === 'screen-session-choice') { if (currentClassId) renderSessionChoice(currentClassId); }
       else if (aid === 'screen-class') { if (currentClassId) { var cls2 = CLASSES.find(function (c) { return c.id === currentClassId; }); if (cls2) cls2.students.forEach(function (s) { if (!(s in sessionData)) sessionData[s] = 'unmarked'; }); renderClassScreen(); } }
-      else if (aid === 'screen-profile') { var f = document.activeElement; if (!(f && (f.tagName === 'INPUT' || f.tagName === 'TEXTAREA')) && profileCurrentCid && profileCurrentName) renderProfileContent(profileCurrentCid, profileCurrentName); }
+      else if (aid === 'screen-profile') { if (profileCurrentCid && profileCurrentName) renderProfileContent(profileCurrentCid, profileCurrentName); }
       else if (aid === 'screen-history') { openGlobalHistory(); }
     }
 
@@ -4001,26 +4019,31 @@
       };
     }
 
-    // ── Fallback poll: every 3s when WebSocket is down ─────────────────
+    // ── Fallback poll: every 15s when WebSocket is down ────────────────
     function startFallbackPoll() {
       if (fallbackInterval) return;
-      console.log('📡 Starting fallback poll (3s)');
+      console.log('📡 Starting fallback poll (15s)');
       fallbackInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
         if (realtimeOk) { clearInterval(fallbackInterval); fallbackInterval = null; return; }
-        setSyncStatus('syncing');
-        try { await pullAll(); setSyncStatus('ok'); }
-        catch (e) { setSyncStatus('error'); }
-      }, 3000);
+        // Don't flash the syncing animation if user is actively typing/working
+        if (!_userIsWorking) setSyncStatus('syncing');
+        try {
+          await pullAll();
+          if (!_userIsWorking) setSyncStatus('ok');
+        }
+        catch (e) { if (!_userIsWorking) setSyncStatus('error'); }
+      }, 15000);
     }
 
-    // ── Background safety-net poll: every 10s even when WebSocket is up ─
+    // ── Background safety-net poll: every 30s even when WebSocket is up ─
     function startBgPoll() {
       if (bgPollInterval) return;
       bgPollInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
+        // Silent pull — never triggers sync animation during background polls
         try { await pullAll(); } catch (e) { /* silent */ }
-      }, 10000);
+      }, 30000);
     }
 
     // ── Sync immediately when tab becomes visible ───────────────────────
