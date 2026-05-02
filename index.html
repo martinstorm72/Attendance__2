@@ -2272,7 +2272,9 @@
           }
 
           // Apply extra students (skip deleted ones), persist to localStorage
-          const extra = loadExtraStudents();
+          // Build fresh from cloud — do NOT merge with stale local data,
+          // otherwise names deleted in another browser survive here.
+          const freshExtra = {};
           if (studentRows && studentRows.length) {
             const deleted = loadDeletedStudents();
             // Deduplicate by class_id+name in case old duplicate rows exist in DB
@@ -2282,11 +2284,11 @@
               if (seen.has(key)) return;
               seen.add(key);
               if (deleted.includes(key)) return;
-              if (!extra[row.class_id]) extra[row.class_id] = [];
-              if (!extra[row.class_id].includes(row.name)) extra[row.class_id].push(row.name);
+              if (!freshExtra[row.class_id]) freshExtra[row.class_id] = [];
+              freshExtra[row.class_id].push(row.name);
             });
-            saveExtraStudents(extra);
           }
+          saveExtraStudents(freshExtra);
 
           // Rebuild CLASSES.students cleanly from localStorage
           const deletedFinal = loadDeletedStudents();
