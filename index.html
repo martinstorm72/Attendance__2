@@ -888,20 +888,28 @@ const SUPABASE_URL = 'https://ncgjtnceblmjkbwfhvsu.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZ2p0bmNiYmxtamtid2ZodnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3Mjg1OTUsImV4cCI6MjA5MjMwNDU5NX0.X2IExv-xpAPo5k5vcByzNaVJibG64JZKhY-UTJgU4YA';
 
 async function sbFetch(path, opts = {}) {
+  // Build headers cleanly — no duplicate Prefer conflict
+  const method = opts.method || 'GET';
+  const isWrite = method !== 'GET';
+  const prefer = isWrite ? 'return=minimal' : 'return=representation';
+  const extraHeaders = opts.headers || {};
+  // Remove Prefer from extraHeaders to avoid duplicate
+  const { Prefer: _ignored, ...cleanExtra } = extraHeaders;
+
   const res = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
     headers: {
       'apikey': SUPABASE_ANON,
       'Authorization': 'Bearer ' + SUPABASE_ANON,
       'Content-Type': 'application/json',
-      'Prefer': opts.prefer || 'return=representation',
-      ...(opts.headers || {})
+      'Prefer': opts.prefer || prefer,
+      ...cleanExtra
     },
-    method: opts.method || 'GET',
+    method,
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err);
+    throw new Error(`Supabase ${method} ${path}: ${err}`);
   }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -1109,7 +1117,6 @@ async function pushToCloud(cid, date, statuses, times) {
     await sbFetch('attendance', {
       method: 'POST',
       prefer: 'resolution=merge-duplicates,return=minimal',
-      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
       body: {
         class_id: cid,
         session_date: date,
@@ -1119,7 +1126,7 @@ async function pushToCloud(cid, date, statuses, times) {
       }
     });
   } catch(e) {
-    console.warn('Push failed:', e);
+    console.warn('pushToCloud failed:', e);
   }
 }
 
@@ -1131,11 +1138,10 @@ async function pushExtraStudent(cid, name) {
     await sbFetch('extra_students', {
       method: 'POST',
       prefer: 'resolution=merge-duplicates,return=minimal',
-      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
       body: { class_id: cid, name: name }
     });
   } catch(e) {
-    console.warn('Extra student push failed:', e);
+    console.warn('pushExtraStudent failed:', e);
   }
 }
 
@@ -1152,10 +1158,9 @@ async function pushProfileToCloud(studentKey, profileData) {
     await sbFetch('student_profiles', {
       method: 'POST',
       prefer: 'resolution=merge-duplicates,return=minimal',
-      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
       body: { student_key: studentKey, profile: profileData, updated_at: new Date().toISOString() }
     });
-  } catch(e) { console.warn('Profile push failed:', e); }
+  } catch(e) { console.warn('pushProfileToCloud failed:', e); }
 }
 
 async function pullProfilesFromCloud() {
@@ -2284,45 +2289,38 @@ function confirmDeleteSession(cid, date) {
     '<button class="modal-btn primary" id="del-session-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الجلسة</button>' +
     '<button class="modal-btn secondary" id="del-session-cancel">إلغاء</button>'
   );
-  document.getElementById('del-session-confirm').addEventListener('click', async function() {
+  document.getElementById('del-session-confirm').addEventListener('click', function() {
     closeModal();
-    await deleteSession(cid, date);
+    deleteSession(cid, date);
   });
   document.getElementById('del-session-cancel').addEventListener('click', closeModal);
 }
 
-async function deleteSession(cid, date) {
-  // Remove locally
+function deleteSession(cid, date) {
+  // ── 1. Remove locally & update UI instantly ──
   db = loadData();
   if (db[cid]) {
     delete db[cid][date];
     if (db[cid + '_times']) delete db[cid + '_times'][date];
     saveData(db);
   }
-  // Remove from cloud
-  try {
-    await sbFetch('attendance?class_id=eq.' + encodeURIComponent(cid) + '&session_date=eq.' + encodeURIComponent(date), {
-      method: 'DELETE',
-      prefer: 'return=minimal',
-      headers: { 'Prefer': 'return=minimal' }
-    });
-  } catch(e) { console.warn('Cloud session delete failed:', e); }
-  // Refresh UI — be safe about which screen is active
+  // ── 2. Refresh UI immediately ──
   const active = document.querySelector('.screen.active');
   const aid = active ? active.id : '';
   if (aid === 'screen-class' && currentClassId === cid) {
-    renderTab(currentTab);
-    renderStats();
+    renderTab(currentTab); renderStats();
   } else if (aid === 'screen-session-choice') {
     renderSessionChoice(cid);
   } else if (aid === 'screen-history') {
     openGlobalHistory();
   } else {
-    // Fallback: re-open the session choice for this class
-    currentClassId = cid;
-    renderSessionChoice(cid);
+    currentClassId = cid; renderSessionChoice(cid);
   }
   renderHome();
+  // ── 3. Cloud delete in background (non-blocking) ──
+  sbFetch('attendance?class_id=eq.' + encodeURIComponent(cid) + '&session_date=eq.' + encodeURIComponent(date), {
+    method: 'DELETE'
+  }).catch(e => console.warn('Cloud session delete failed:', e));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2339,9 +2337,9 @@ function confirmDeleteProfile() {
     '<button class="modal-btn primary" id="del-prof-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
     '<button class="modal-btn secondary" id="del-prof-cancel">إلغاء</button>'
   );
-  document.getElementById('del-prof-confirm').addEventListener('click', async function() {
+  document.getElementById('del-prof-confirm').addEventListener('click', function() {
     closeModal();
-    await deleteProfileData(cid, name);
+    deleteProfileData(cid, name);
     showScreen('screen-class');
   });
   document.getElementById('del-prof-cancel').addEventListener('click', closeModal);
@@ -2356,33 +2354,29 @@ function confirmDeleteProfile2(cid, name) {
     '<button class="modal-btn primary" id="del-prof2-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
     '<button class="modal-btn secondary" id="del-prof2-cancel">إلغاء</button>'
   );
-  document.getElementById('del-prof2-confirm').addEventListener('click', async function() {
+  document.getElementById('del-prof2-confirm').addEventListener('click', function() {
     closeModal();
-    await deleteProfileData(cid, name);
+    deleteProfileData(cid, name);
     renderHomeProfiles();
   });
   document.getElementById('del-prof2-cancel').addEventListener('click', closeModal);
 }
 
-async function deleteProfileData(cid, name) {
+function deleteProfileData(cid, name) {
   const key = getProfileKey(cid, name);
-  // Remove locally
+  // ── 1. Remove locally instantly ──
   const profiles = loadProfiles();
   delete profiles[key];
   saveProfiles(profiles);
-  // Remove from cloud
-  try {
-    await sbFetch('student_profiles?student_key=eq.' + encodeURIComponent(key), {
-      method: 'DELETE',
-      prefer: 'return=minimal',
-      headers: { 'Prefer': 'return=minimal' }
-    });
-  } catch(e) { console.warn('Cloud profile delete failed:', e); }
-  // Refresh home profiles list if it's visible
+  // ── 2. Refresh UI immediately ──
   if (profilesSectionUnlocked) {
     const profilesDiv = document.getElementById('home-profiles');
     if (profilesDiv && profilesDiv.style.display !== 'none') renderHomeProfiles();
   }
+  // ── 3. Cloud delete in background (non-blocking) ──
+  sbFetch('student_profiles?student_key=eq.' + encodeURIComponent(key), {
+    method: 'DELETE'
+  }).catch(e => console.warn('Cloud profile delete failed:', e));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2397,44 +2391,31 @@ function confirmDeleteStudent(cid, name) {
     '<button class="modal-btn primary" id="del-stu-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف</button>' +
     '<button class="modal-btn secondary" id="del-stu-cancel">إلغاء</button>'
   );
-  document.getElementById('del-stu-confirm').addEventListener('click', async function() {
+  document.getElementById('del-stu-confirm').addEventListener('click', function() {
     closeModal();
-    await doDeleteStudent(cid, name);
+    doDeleteStudent(cid, name);
   });
   document.getElementById('del-stu-cancel').addEventListener('click', closeModal);
 }
 
-async function doDeleteStudent(cid, name) {
+function doDeleteStudent(cid, name) {
   const cls = CLASSES.find(c => c.id === cid);
-  // Remove from in-memory
+  // ── 1. Update locally & UI instantly ──
   const idx = cls.students.indexOf(name);
   if (idx !== -1) cls.students.splice(idx, 1);
-  // Persist deletion locally
   const deleted = loadDeletedStudents();
   const key = cid + '::' + name;
   if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
-  // Remove from extra students locally
   const extra = loadExtraStudents();
-  if (extra[cid]) {
-    extra[cid] = extra[cid].filter(n => n !== name);
-    saveExtraStudents(extra);
-  }
-  // Remove from session data
+  if (extra[cid]) { extra[cid] = extra[cid].filter(n => n !== name); saveExtraStudents(extra); }
   delete sessionData[name];
-  // Remove from cloud
-  try {
-    await sbFetch('extra_students?class_id=eq.' + encodeURIComponent(cid) + '&name=eq.' + encodeURIComponent(name), {
-      method: 'DELETE',
-      prefer: 'return=minimal',
-      headers: { 'Prefer': 'return=minimal' }
-    });
-  } catch(e) { console.warn('Cloud student delete failed:', e); }
-  // Refresh UI — make sure we update the right screen
-  if (currentClassId === cid) {
-    renderTab(currentTab);
-    renderStats();
-  }
+  // ── 2. Refresh UI immediately (no waiting for cloud) ──
+  if (currentClassId === cid) { renderTab(currentTab); renderStats(); }
   renderHome();
+  // ── 3. Cloud delete in background (non-blocking) ──
+  sbFetch('extra_students?class_id=eq.' + encodeURIComponent(cid) + '&name=eq.' + encodeURIComponent(name), {
+    method: 'DELETE'
+  }).catch(e => console.warn('Cloud student delete failed:', e));
 }
 
 // ═══════════════════════════════════════════════════════════════════
