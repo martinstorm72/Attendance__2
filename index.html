@@ -2425,12 +2425,21 @@
     // MODAL
     // ═══════════════════════════════════════════════════════════════════
     function showModal(html) {
-      const m = document.getElementById('modal');
-      m.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,0.7);align-items:flex-end;justify-content:center;z-index:1000;padding:20px;padding-bottom:calc(20px + var(--safe-bottom))';
-      m.innerHTML = '<div class="modal-box">' + html + '</div>';
+      // Remove any existing modal overlay to avoid stacking
+      var old = document.getElementById('modal-overlay');
+      if (old) old.remove();
+      var overlay = document.createElement('div');
+      overlay.id = 'modal-overlay';
+      overlay.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(0,0,0,0.7);align-items:flex-end;justify-content:center;z-index:9999;padding:20px;padding-bottom:calc(20px + env(safe-area-inset-bottom, 0px))';
+      overlay.innerHTML = '<div class="modal-box">' + html + '</div>';
+      document.body.appendChild(overlay);
     }
     function closeModal() {
-      document.getElementById('modal').style.display = 'none';
+      var overlay = document.getElementById('modal-overlay');
+      if (overlay) overlay.remove();
+      // Also hide the old static modal in case it's showing
+      var old = document.getElementById('modal');
+      if (old) old.style.display = 'none';
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -4458,8 +4467,14 @@
         '</div>' +
         '<button class="profile-save-btn" id="profile-save-btn" onclick="saveProfileScreen()">💾 حفظ الملف الشخصي</button>' +
         '<div id="profile-sync-status" style="text-align:center;font-size:11px;color:var(--muted);padding:6px 0 4px;display:none"></div>' +
-        '<button onclick="confirmDeleteProfile()" style="width:100%;padding:13px;border-radius:var(--radius);background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:8px">🗑️ حذف الملف الشخصي</button>' +
+        '<button id="delete-profile-btn" style="width:100%;padding:13px;border-radius:var(--radius);background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:8px">🗑️ حذف الملف الشخصي</button>' +
         '<div class="bottom-safe"></div>';
+
+      // Wire delete button with addEventListener (inline onclick inside innerHTML can fail)
+      var delBtn = document.getElementById('delete-profile-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', function() { confirmDeleteProfile(); });
+      }
     }
     function openProfile(cid, name) {
       profileCurrentCid = cid;
