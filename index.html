@@ -914,12 +914,22 @@ const CLASSES = [
   {
     id: 'c1', name: 'أولى ابتدائي', sub: 'الصف الأول',
     icon: '١', color: '#4f8ef7', bg: 'rgba(79,142,247,0.15)',
-    students: []
+    students: [
+      'مريم جورج', 'بيشوي ميلاد', 'مارينا سمير', 'كيرلس فادي',
+      'ماريان رامي', 'فيلوباتير يوسف', 'إيريني نبيل', 'مينا إسحاق',
+      'كريستين عاطف', 'أبانوب ماهر', 'ريجينا أنطوان', 'جرجس أيمن',
+      'سالي سعد', 'بولا نصر', 'مارك نادر'
+    ]
   },
   {
     id: 'c2', name: 'تانية ابتدائي', sub: 'الصف الثاني',
     icon: '٢', color: '#22c55e', bg: 'rgba(34,197,94,0.15)',
-    students: []
+    students: [
+      'ماريا ميخائيل', 'بيتر عزيز', 'ندى وليم', 'إبراهيم جميل',
+      'ستيفاني رفعت', 'يوسف سعيد', 'أميلي منصور', 'مارتينا طارق',
+      'ميناس هاني', 'فيكتوريا عصام', 'إريك مجدي', 'جولي صبري',
+      'مارك سامي', 'نانسي راعي', 'بيشوي رفيق'
+    ]
   },
   {
     id: 'c3', name: 'تالتة ابتدائي', sub: 'الصف الثالث',
@@ -1029,96 +1039,78 @@ function setSyncStatus(s) {
   const el = document.getElementById('sync-indicator');
   if (!el) return;
   const states = {
-    syncing: { dot: '#f59e0b', text: 'جارٍ المزامنة…',      pulse: true  },
-    ok:      { dot: '#22c55e', text: 'تمت المزامنة ✓',       pulse: false },
-    live:    { dot: '#22c55e', text: '● مباشر — متصل',       pulse: true  },
-    error:   { dot: '#ef4444', text: 'غير متصل',             pulse: false },
-    idle:    { dot: '#64748b', text: 'المزامنة السحابية',     pulse: false }
+    syncing: { dot: '#f59e0b', text: 'جارٍ المزامنة…', pulse: true  },
+    ok:      { dot: '#22c55e', text: 'تمت المزامنة ✓', pulse: false },
+    error:   { dot: '#ef4444', text: 'غير متصل',        pulse: false },
+    idle:    { dot: '#64748b', text: 'المزامنة السحابية',pulse: false }
   };
   const st = states[s] || states.idle;
   const pulseStyle = st.pulse ? 'animation:pulse-dot 1.2s ease infinite;' : '';
   el.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:' + st.dot + ';display:inline-block;margin-left:5px;' + pulseStyle + '"></span>' + st.text;
-  // Auto-revert 'ok' back to live (if WS connected) or idle after 3 seconds
+  // Auto-revert 'ok' back to idle after 3 seconds
   if (s === 'ok') {
     if (_syncOkTimer) clearTimeout(_syncOkTimer);
-    _syncOkTimer = setTimeout(function() {
-      setSyncStatus(realtimeOk ? 'live' : 'idle');
-    }, 2000);
+    _syncOkTimer = setTimeout(function() { setSyncStatus('idle'); }, 3000);
   }
 }
 
 
 // ═══════════════════════════════════════════════════════════════════
-// CLOUD SYNC — PULL (cloud is always the single source of truth)
+// CLOUD SYNC — PULL (fetch all records from Supabase)
 // ═══════════════════════════════════════════════════════════════════
 async function pullFromCloud() {
   try {
-    // 1. Attendance
     const rows = await sbFetch('attendance?select=*&order=session_date.desc', {
-      headers: { 'Range': '0-9999' }
+      headers: { 'Range': '0-999' }
+    });
+    if (!rows || !rows.length) { return; }
+
+    // Rebuild db from cloud rows
+    const cloudDb = {};
+    rows.forEach(row => {
+      const cid = row.class_id;
+      const date = row.session_date;
+      if (!cloudDb[cid]) cloudDb[cid] = {};
+      if (!cloudDb[cid + '_times']) cloudDb[cid + '_times'] = {};
+      cloudDb[cid][date] = row.statuses || {};
+      if (row.times) cloudDb[cid + '_times'][date] = row.times;
     });
 
-    const cloudDb = {};
-    if (rows && rows.length) {
-      rows.forEach(row => {
-        const cid  = row.class_id;
-        const date = row.session_date;
-        if (!cloudDb[cid]) cloudDb[cid] = {};
-        if (!cloudDb[cid + '_times']) cloudDb[cid + '_times'] = {};
-        cloudDb[cid][date] = row.statuses || {};
-        if (row.times) cloudDb[cid + '_times'][date] = row.times;
-      });
-    }
-
-    // Cloud fully replaces local for every class — cloud is the single source of truth
+    // Deep merge: start with local data, then overlay cloud data per-class per-date.
+    // Cloud wins on any date both have; local-only dates/keys are preserved.
     const local = loadData();
     db = { ...local };
     CLASSES.forEach(cls => {
-      if (cloudDb[cls.id] !== undefined) {
-        db[cls.id] = cloudDb[cls.id];
+      // Merge attendance dates
+      if (cloudDb[cls.id]) {
+        db[cls.id] = Object.assign({}, local[cls.id] || {}, cloudDb[cls.id]);
       }
-      if (cloudDb[cls.id + '_times'] !== undefined) {
-        db[cls.id + '_times'] = cloudDb[cls.id + '_times'];
+      // Merge times
+      if (cloudDb[cls.id + '_times']) {
+        db[cls.id + '_times'] = Object.assign({}, (local[cls.id + '_times'] || {}), cloudDb[cls.id + '_times']);
       }
     });
     saveData(db);
 
-// ── 2. Extra / deleted students ────────────────────────────────
+    // Also pull extra students added via cloud
     try {
-      // Pull added students
       const studentRows = await sbFetch('extra_students?select=*');
-      // Pull deleted students from cloud
-      let cloudDeleted = [];
-      try {
-        const delRows = await sbFetch('deleted_students?select=*');
-        if (delRows && delRows.length) {
-          cloudDeleted = delRows.map(r => r.student_key);
-        }
-      } catch(e) { /* table may not exist yet */ }
-
-      // Merge local + cloud deleted lists, save unified list
-      const localDeleted = loadDeletedStudents();
-      const allDeleted = Array.from(new Set([...localDeleted, ...cloudDeleted]));
-      saveDeletedStudents(allDeleted);
-
-      // Rebuild CLASSES students from cloud extra_students, honouring deletions
-      // First reset each class to base empty state (names come from cloud only)
-      CLASSES.forEach(cls => { cls.students = []; });
-
-      const extra = {};
       if (studentRows && studentRows.length) {
+        const extra = loadExtraStudents();
+        const deleted = loadDeletedStudents();
         studentRows.forEach(row => {
           const cls = CLASSES.find(c => c.id === row.class_id);
           if (!cls) return;
           const key = row.class_id + '::' + row.name;
-          if (allDeleted.includes(key)) return; // skip deleted
+          if (deleted.includes(key)) return; // skip deleted students
+          if (!cls.students.includes(row.name)) cls.students.push(row.name);
+          // Also persist locally
           if (!extra[row.class_id]) extra[row.class_id] = [];
           if (!extra[row.class_id].includes(row.name)) extra[row.class_id].push(row.name);
-          if (!cls.students.includes(row.name)) cls.students.push(row.name);
         });
+        saveExtraStudents(extra);
       }
-      saveExtraStudents(extra);
-    } catch(e) { console.warn('Student sync failed:', e); }
+    } catch(e) { /* table may not exist yet */ }
 
   } catch(e) {
     console.warn('Pull failed:', e);
@@ -1186,19 +1178,9 @@ async function pullProfilesFromCloud() {
   try {
     const rows = await sbFetch('student_profiles?select=*');
     if (!rows || !rows.length) return;
-    // Cloud always wins — fully replace local profiles with cloud data
-    const profiles = loadProfiles();
-    rows.forEach(row => {
-      if (!row.student_key) return;
-      const cloudUpdated = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-      const local = profiles[row.student_key];
-      const localUpdated = (local && local._updated_at) ? new Date(local._updated_at).getTime() : 0;
-      // Cloud wins unless local is strictly newer (user edited this device very recently)
-      if (!local || cloudUpdated >= localUpdated) {
-        profiles[row.student_key] = row.profile || {};
-      }
-    });
-    saveProfiles(profiles);
+    const local = loadProfiles();
+    rows.forEach(row => { local[row.student_key] = row.profile; });
+    saveProfiles(local);
   } catch(e) { /* table may not exist yet */ }
 }
 
@@ -1209,10 +1191,9 @@ function getProfile(cid, name) {
 }
 function setProfile(cid, name, data) {
   const profiles = loadProfiles();
-  const stamped = { ...data, _updated_at: new Date().toISOString() };
-  profiles[getProfileKey(cid, name)] = stamped;
+  profiles[getProfileKey(cid, name)] = data;
   saveProfiles(profiles);
-  pushProfileToCloud(getProfileKey(cid, name), stamped);
+  pushProfileToCloud(getProfileKey(cid, name), data);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1405,22 +1386,17 @@ function renderHomeProfiles() {
     const safeN = item.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     html +=
       '<div class="home-profile-row" data-name="' + item.name.toLowerCase() + '" ' +
-        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
-        '<div onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" style="display:flex;align-items:center;gap:12px;flex:1;cursor:pointer;min-width:0">' +
-          avatarImg(color, 40, '') +
-          '<div style="flex:1;min-width:0">' +
-            '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
-            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
-          '</div>' +
-          '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
-            (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
-            '<span style="color:var(--muted);font-size:16px">›</span>' +
-          '</div>' +
+        'onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" ' +
+        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;cursor:pointer;transition:background 0.15s;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
+        avatarImg(color, 40, '') +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
         '</div>' +
-        '<button onclick="confirmDeleteStudent(\'' + item.cid + '\',\'' + safeN + '\')" title="حذف المخدوم" ' +
-          'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;margin-left:4px">' +
-          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
-        '</button>' +
+        '<div style="display:flex;align-items:center;gap:6px">' +
+          (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
+          '<span style="color:var(--muted);font-size:16px">›</span>' +
+        '</div>' +
       '</div>';
   });
 
@@ -1504,21 +1480,15 @@ function renderSessionChoice(cid) {
       const p = Object.values(day).filter(v => v === 'present').length;
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
-      html += '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;padding:12px 14px;display:flex;align-items:center;gap:12px">' +
-        '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" style="flex:1;cursor:pointer">' +
-          '<div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div>' +
-        '</div>' +
+      html += '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" ' +
+        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">' +
+        '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<span style="background:var(--green-bg);color:var(--green-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + p + 'ح</span>' +
           '<span style="background:var(--red-bg);color:var(--red-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + a + 'غ</span>' +
-          '<span onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" style="color:var(--muted);font-size:16px;cursor:pointer">›</span>' +
-          '<button onclick="event.stopPropagation();confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" title="حذف الجلسة" ' +
-            'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
-            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
-          '</button>' +
-        '</div>' +
-      '</div>';
+          '<span style="color:var(--muted);font-size:16px">›</span>' +
+        '</div></div>';
     });
   }
 
@@ -1792,23 +1762,16 @@ function renderTab(tab) {
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
       html +=
-        '<div class="hist-item" style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:center;gap:8px;">' +
-          '<div onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;padding:12px 14px;">' +
-            '<div><div class="hist-date">' + label + '</div>' +
-            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
-            '<div style="margin-right:auto;display:flex;align-items:center;gap:8px">' +
-              '<div class="hist-badges">' +
-                '<span class="mini-badge" style="background:var(--green-bg);color:var(--green-text)">' + p + 'ح</span>' +
-                '<span class="mini-badge" style="background:var(--red-bg);color:var(--red-text)">' + a + 'غ</span>' +
-              '</div>' +
-              '<span style="color:var(--muted);font-size:16px">›</span>' +
+        '<div class="hist-item" onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" ' +
+        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;">' +
+          '<div><div class="hist-date">' + label + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
+          '<div style="display:flex;align-items:center;gap:8px">' +
+            '<div class="hist-badges">' +
+              '<span class="mini-badge" style="background:var(--green-bg);color:var(--green-text)">' + p + 'ح</span>' +
+              '<span class="mini-badge" style="background:var(--red-bg);color:var(--red-text)">' + a + 'غ</span>' +
             '</div>' +
-          '</div>' +
-          '<div style="padding:0 10px 0 0;flex-shrink:0">' +
-            '<button onclick="confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" title="حذف الجلسة" ' +
-              'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
-              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
-            '</button>' +
+            '<span style="color:var(--muted);font-size:16px">›</span>' +
           '</div>' +
         '</div>';
     });
@@ -2106,7 +2069,6 @@ function getConsecutiveAbsentAlerts(cid) {
 // SET STATUS
 // ═══════════════════════════════════════════════════════════════════
 function setStatus(sid, status) {
-  touchUserAction();
   const prev = sessionData[sid];
   sessionData[sid] = status;
   if (status === 'present') {
@@ -2116,23 +2078,6 @@ function setStatus(sid, status) {
   }
   renderTab('attend');
 
-  // Push this single student's change to cloud immediately (live multi-device)
-  // Always merge into the full existing cloud record so we never clobber other users' entries
-  const cid = currentClassId;
-  const date = todayStr();
-  if (cid) {
-    if (!db[cid]) db[cid] = {};
-    if (!db[cid][date]) db[cid][date] = {};
-    db[cid][date][sid] = status;
-    if (!db[cid + '_times']) db[cid + '_times'] = {};
-    if (!db[cid + '_times'][date]) db[cid + '_times'][date] = {};
-    if (status === 'present') db[cid + '_times'][date][sid] = sessionTimes[sid];
-    else delete db[cid + '_times'][date][sid];
-    saveData(db);
-    // Send the complete merged record so cloud always has the full picture
-    pushToCloud(cid, date, { ...db[cid][date] }, { ...(db[cid + '_times'][date] || {}) });
-  }
-
   // Brief haptic-style visual feedback on the tapped button
   requestAnimationFrame(function() {
     const rows = document.querySelectorAll('#student-list .student-row');
@@ -2141,7 +2086,7 @@ function setStatus(sid, status) {
         const btn = row.querySelector('.att-btn.' + (status === 'present' ? 'p' : status === 'absent' ? 'a' : 'l'));
         if (btn) {
           btn.classList.remove('pop');
-          void btn.offsetWidth;
+          void btn.offsetWidth; // force reflow
           btn.classList.add('pop');
           setTimeout(function(){ btn.classList.remove('pop'); }, 300);
         }
@@ -2398,17 +2343,7 @@ function confirmAddPerson() {
   const deleted = loadDeletedStudents();
   const key = cid + '::' + name;
   const di = deleted.indexOf(key);
-  if (di !== -1) {
-    deleted.splice(di, 1);
-    saveDeletedStudents(deleted);
-    // Remove from cloud deleted_students too
-    try {
-      sbFetch('deleted_students?student_key=eq.' + encodeURIComponent(key), {
-        method: 'DELETE', prefer: 'return=minimal',
-        headers: { 'Prefer': 'return=minimal' }
-      });
-    } catch(e) { /* silent */ }
-  }
+  if (di !== -1) { deleted.splice(di, 1); saveDeletedStudents(deleted); }
 
   // Mark as unmarked in current session
   if (currentClassId === cid) {
@@ -2436,155 +2371,67 @@ function confirmAddPerson() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// DELETE STUDENT
-// ═══════════════════════════════════════════════════════════════════
-function confirmDeleteStudent(cid, name) {
-  const cls = CLASSES.find(c => c.id === cid);
-  showModal(
-    '<div class="modal-icon">🗑️</div>' +
-    '<div class="modal-title">حذف المخدوم</div>' +
-    '<div class="modal-body">هل أنت متأكد من حذف <strong style="color:white">' + name + '</strong> من <strong style="color:white">' + cls.name + '</strong>؟<br><span style="font-size:11px;color:var(--red)">⚠️ لا يمكن التراجع عن هذا الإجراء</span></div>' +
-    '<button class="modal-btn primary" id="confirm-del-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">🗑️ حذف</button>' +
-    '<button class="modal-btn secondary" id="cancel-del-btn">إلغاء</button>'
-  );
-  document.getElementById('confirm-del-btn').addEventListener('click', async function() {
-    // Remove from in-memory CLASSES
-    const idx = cls.students.indexOf(name);
-    if (idx !== -1) cls.students.splice(idx, 1);
-    const key = cid + '::' + name;
-    // Persist deletion locally
-    const deleted = loadDeletedStudents();
-    if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
-    // Remove from local extra students
-    const extra = loadExtraStudents();
-    if (extra[cid]) {
-      const ei = extra[cid].indexOf(name);
-      if (ei !== -1) { extra[cid].splice(ei, 1); saveExtraStudents(extra); }
-    }
-    // Remove from session data if active
-    if (currentClassId === cid && sessionData[name]) delete sessionData[name];
-    // Push deletion to cloud so other devices sync it
-    try {
-      await sbFetch('extra_students?class_id=eq.' + cid + '&name=eq.' + encodeURIComponent(name), {
-        method: 'DELETE', prefer: 'return=minimal',
-        headers: { 'Prefer': 'return=minimal' }
-      });
-    } catch(e) { console.warn('Cloud student delete failed:', e); }
-    try {
-      await sbFetch('deleted_students', {
-        method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
-        headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-        body: { student_key: key }
-      });
-    } catch(e) { /* table may not exist yet */ }
-    closeModal();
-    if (currentClassId === cid) { renderTab(currentTab); renderStats(); }
-    renderHome();
-  });
-  document.getElementById('cancel-del-btn').addEventListener('click', closeModal);
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// DELETE SESSION
-// ═══════════════════════════════════════════════════════════════════
-async function confirmDeleteSession(cid, date) {
-  const cls = CLASSES.find(c => c.id === cid);
-  const label = date === todayStr() ? 'اليوم' : formatDate(date);
-  showModal(
-    '<div class="modal-icon">🗑️</div>' +
-    '<div class="modal-title">حذف الجلسة</div>' +
-    '<div class="modal-body">هل أنت متأكد من حذف جلسة <strong style="color:white">' + label + '</strong> في <strong style="color:white">' + cls.name + '</strong>؟<br><span style="font-size:11px;color:var(--red)">⚠️ سيتم حذف جميع بيانات الحضور لهذه الجلسة</span></div>' +
-    '<button class="modal-btn primary" id="confirm-delsess-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">🗑️ حذف الجلسة</button>' +
-    '<button class="modal-btn secondary" id="cancel-delsess-btn">إلغاء</button>'
-  );
-  document.getElementById('confirm-delsess-btn').addEventListener('click', async function() {
-    db = loadData();
-    if (db[cid] && db[cid][date]) {
-      delete db[cid][date];
-      if (db[cid + '_times'] && db[cid + '_times'][date]) delete db[cid + '_times'][date];
-      saveData(db);
-      // Delete from cloud
-      try {
-        await sbFetch('attendance?class_id=eq.' + cid + '&session_date=eq.' + date, {
-          method: 'DELETE',
-          prefer: 'return=minimal',
-          headers: { 'Prefer': 'return=minimal' }
-        });
-      } catch(e) { console.warn('Cloud delete failed:', e); }
-    }
-    closeModal();
-    renderSessionChoice(cid);
-  });
-  document.getElementById('cancel-delsess-btn').addEventListener('click', closeModal);
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// REALTIME SYNC — Live multi-device with instant screen refresh
+// REALTIME SYNC — Supabase WebSocket subscriptions + fallback poll
 // ═══════════════════════════════════════════════════════════════════
 
-// Track whether the user is actively tapping buttons (to avoid re-render mid-tap)
-let _lastUserAction = 0;
-function touchUserAction() { _lastUserAction = Date.now(); }
-
-// Smart live refresh — re-renders whichever screen is currently active
-// with fresh cloud data. Skips re-render if user tapped within 1.5s to
-// avoid interrupting active attendance marking.
-function onRemoteChange(source) {
+// Central refresh: called whenever any remote change arrives.
+// Re-renders the currently active screen so all devices see changes immediately.
+function onRemoteChange() {
+  // Refresh in-memory db
   db = loadData();
-  const activeScreen = document.querySelector('.screen.active');
-  if (!activeScreen) return;
-  const id = activeScreen.id;
-  const msSinceAction = Date.now() - _lastUserAction;
-  const userIsActive = msSinceAction < 1500;
 
-  if (id === 'screen-home') {
+  // Re-apply stored students so new students added on another device appear
+  applyStoredStudents();
+
+  // Re-render whichever screen is currently visible
+  var active = document.querySelector('.screen.active');
+  if (!active) return;
+  var aid = active.id;
+
+  if (aid === 'screen-home') {
     renderHome();
-  } else if (id === 'screen-session-choice') {
-    if (currentClassId) renderSessionChoice(currentClassId);
-  } else if (id === 'screen-class') {
-    // Reload sessionData from the fresh cloud record.
-    // Preserve any local status that is NOT yet in the cloud (user just tapped it).
+  } else if (aid === 'screen-session-choice') {
     if (currentClassId) {
-      const remoteDay = (db[currentClassId] || {})[todayStr()] || {};
-      // If user is actively marking, only pull in remote entries for students
-      // this device hasn't touched yet (status is still 'unmarked' or undefined).
-      Object.keys(remoteDay).forEach(function(s) {
-        if (sessionData[s] === undefined || sessionData[s] === 'unmarked') {
-          sessionData[s] = remoteDay[s];
-        } else if (!userIsActive) {
-          // User stopped tapping — accept remote value for all students
-          sessionData[s] = remoteDay[s];
-        }
-      });
+      var cls1 = CLASSES.find(function(c) { return c.id === currentClassId; });
+      if (cls1) {
+        var subEl = document.getElementById('sc-class-sub');
+        if (subEl) subEl.textContent = cls1.sub + ' · ' + cls1.students.length + ' مخدوم';
+      }
+      renderSessionChoice(currentClassId);
     }
-    renderClassScreen();
-  } else if (id === 'screen-history') {
-    openGlobalHistory();
-  } else if (id === 'screen-profile') {
+  } else if (aid === 'screen-class') {
+    if (currentClassId) {
+      var cls2 = CLASSES.find(function(c) { return c.id === currentClassId; });
+      if (cls2) {
+        cls2.students.forEach(function(s) {
+          if (!(s in sessionData)) sessionData[s] = 'unmarked';
+        });
+      }
+      renderClassScreen();
+    }
+  } else if (aid === 'screen-profile') {
     if (profileCurrentCid && profileCurrentName) {
       renderProfileContent(profileCurrentCid, profileCurrentName);
     }
+  } else if (aid === 'screen-history') {
+    // Re-render history content in place (no screen transition)
+    db = loadData();
+    var histContent = document.getElementById('global-history-content');
+    if (histContent) {
+      var allDates2 = new Set();
+      CLASSES.forEach(function(cls) { Object.keys(db[cls.id] || {}).forEach(function(d) { allDates2.add(d); }); });
+      if (allDates2.size > 0) openGlobalHistory();
+    }
   }
-  // screen-hist-detail: refreshes on next open, not worth interrupting a static view
+  // screen-hist-detail: leave as-is to avoid disrupting viewing
 }
 
 // ── Supabase Realtime via WebSocket (Phoenix protocol) ──────────────
 let realtimeSocket   = null;
 let realtimeOk       = false;
 let fallbackInterval = null;
-let _remoteChangeTimer = null;
-
-// Debounce rapid remote events (e.g. another device saving quickly)
-function scheduleRemoteRefresh(source) {
-  if (_remoteChangeTimer) clearTimeout(_remoteChangeTimer);
-  _remoteChangeTimer = setTimeout(function() { onRemoteChange(source); }, 300);
-}
 
 function startRealtime() {
-  // Don't open a second socket if one is already connecting/open
-  if (realtimeSocket && (realtimeSocket.readyState === WebSocket.OPEN ||
-      realtimeSocket.readyState === WebSocket.CONNECTING)) return;
-
   const wsUrl = SUPABASE_URL.replace('https://', 'wss://') +
                 '/realtime/v1/websocket?apikey=' + SUPABASE_ANON + '&vsn=1.0.0';
 
@@ -2621,40 +2468,51 @@ function startRealtime() {
 
   realtimeSocket.onopen = function() {
     realtimeOk = true;
-    setSyncStatus('ok');
+
+    // Subscribe to all three tables
     subscribeTable('realtime:public:attendance');
     subscribeTable('realtime:public:extra_students');
     subscribeTable('realtime:public:student_profiles');
+
+    // Heartbeat every 25s to keep connection alive
     heartbeatTimer = setInterval(function() {
       send({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(joinRef++) });
     }, 25000);
+
+    // Stop fallback poll if it was running
     if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
   };
 
   realtimeSocket.onmessage = async function(evt) {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
+
+    // Ignore heartbeat acks and join confirmations
     if (msg.event === 'phx_reply' || msg.event === 'phx_close') return;
 
-    const isChange = msg.event === 'postgres_changes' ||
-      (msg.payload && msg.payload.type && ['INSERT','UPDATE','DELETE'].includes(msg.payload.type));
-    if (!isChange) return;
+    // A postgres_changes event arrived — pull fresh data then refresh UI
+    if (msg.event === 'postgres_changes' ||
+        (msg.payload && msg.payload.type && ['INSERT','UPDATE','DELETE'].includes(msg.payload.type))) {
 
-    const table = (msg.payload && msg.payload.table) || '';
-    setSyncStatus('syncing');
-    try {
-      if (table === 'attendance' || table === 'extra_students') {
-        await pullFromCloud();
-      } else if (table === 'student_profiles') {
-        await pullProfilesFromCloud();
-      } else {
-        await pullFromCloud();
-        await pullProfilesFromCloud();
-      }
-      setSyncStatus('ok');
-    } catch(e) { setSyncStatus('error'); }
+      const table = (msg.payload && msg.payload.table) || '';
 
-    scheduleRemoteRefresh(table || 'ws');
+      setSyncStatus('syncing');
+      try {
+        if (table === 'attendance') {
+          await pullFromCloud();
+        } else if (table === 'student_profiles') {
+          await pullProfilesFromCloud();
+        } else if (table === 'extra_students') {
+          await pullFromCloud();
+        } else {
+          await pullFromCloud();
+          await pullProfilesFromCloud();
+        }
+        setSyncStatus('ok');
+      } catch(e) { setSyncStatus('error'); }
+
+      onRemoteChange();
+    }
   };
 
   realtimeSocket.onerror = function() {
@@ -2665,65 +2523,75 @@ function startRealtime() {
   realtimeSocket.onclose = function() {
     realtimeOk = false;
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    // Auto-reconnect after 4 seconds
     setTimeout(function() {
-      if (document.visibilityState !== 'hidden') startRealtime();
-    }, 3000);
+      if (document.visibilityState === 'visible') startRealtime();
+    }, 4000);
     startFallbackPoll();
   };
 }
 
-// ── Fallback poll: 20s interval when WebSocket is down ─────────────
+// ── Fallback poll: runs every 4s when WebSocket is down or reconnecting ──
+// Also runs a slower background poll (every 8s) even when WebSocket is up,
+// as a safety net to catch any missed events.
 let bgPollInterval = null;
 
 function startFallbackPoll() {
-  if (fallbackInterval) return;
+  if (fallbackInterval) return; // already running
   fallbackInterval = setInterval(async function() {
-    if (document.visibilityState === 'hidden') return;
-    if (realtimeOk) { clearInterval(fallbackInterval); fallbackInterval = null; return; }
-    setSyncStatus('syncing');
-    try {
-      await pullFromCloud();
-      await pullProfilesFromCloud();
-      setSyncStatus('ok');
-    } catch(e) { setSyncStatus('error'); }
-    scheduleRemoteRefresh('poll');
-  }, 20000);
+    if (!document.visibilityState || document.visibilityState === 'visible') {
+      if (realtimeOk) {
+        // WebSocket is back — stop the fallback poll
+        clearInterval(fallbackInterval); fallbackInterval = null;
+        return;
+      }
+      setSyncStatus('syncing');
+      try {
+        await pullFromCloud();
+        await pullProfilesFromCloud();
+        setSyncStatus('ok');
+      } catch(e) { setSyncStatus('error'); }
+      onRemoteChange();
+    }
+  }, 4000);
 }
 
 function startBgPoll() {
   if (bgPollInterval) return;
-  // Safety-net: even with WS up, poll every 20s to catch any missed events
+  // Background safety-net poll: catches any WebSocket-missed events
   bgPollInterval = setInterval(async function() {
-    if (document.visibilityState === 'hidden') return;
+    if (document.visibilityState !== 'visible') return;
     try {
-      const prevHash = JSON.stringify(db);
       await pullFromCloud();
       await pullProfilesFromCloud();
-      const newHash = JSON.stringify(loadData());
-      if (newHash !== prevHash) scheduleRemoteRefresh('bgpoll');
+      onRemoteChange();
     } catch(e) { /* silent */ }
-  }, 20000);
+  }, 8000);
 }
 
+// ── Reconnect when tab becomes visible again ────────────────────────
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') {
+    // Reconnect WebSocket if it dropped while tab was hidden
     if (!realtimeSocket || realtimeSocket.readyState === WebSocket.CLOSED ||
         realtimeSocket.readyState === WebSocket.CLOSING) {
       startRealtime();
     }
+    // Immediate pull on focus to show any changes that happened while away
     setSyncStatus('syncing');
     pullFromCloud().then(function() {
       return pullProfilesFromCloud();
     }).then(function() {
       setSyncStatus('ok');
-      scheduleRemoteRefresh('focus');
+      onRemoteChange();
     }).catch(function() { setSyncStatus('error'); });
   }
 });
 
+// Kept for backward compatibility — init() calls this
 function startSyncPoll() {
   startRealtime();
-  startBgPoll();
+  startBgPoll(); // always run background safety-net poll
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2939,6 +2807,8 @@ function renderHomePublicProfiles() {
           '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+          '<span style="font-size:10px;background:rgba(34,197,94,0.12);color:var(--green);padding:2px 7px;border-radius:10px;font-weight:600">\u2713 ' + totalPres + '</span>' +
+          (totalAbs > 0 ? '<span style="font-size:10px;background:rgba(239,68,68,0.12);color:#fca5a5;padding:2px 7px;border-radius:10px;font-weight:600">\u2717 ' + totalAbs + '</span>' : '') +
           '<svg id="' + rowId + '-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.25s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>' +
         '</div>' +
       '</div>' +
@@ -2954,7 +2824,7 @@ function renderHomePublicProfiles() {
           editField(pfx + 'hobby',        '\ud83c\udfaf', '\u0627\u0644\u0647\u0648\u0627\u064a\u0629',                                   profile.hobby,       'text', 'rtl') +
           editField(pfx + 'parentName',   '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67', '\u0627\u0633\u0645 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentName, 'text', 'rtl') +
           editField(pfx + 'parentPhone',  '\ud83d\udcde', '\u0631\u0642\u0645 \u0647\u0627\u062a\u0641 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentPhone, 'tel', 'ltr') +
-          // save + delete buttons
+          // save button
           '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">' +
             '<button id="' + rowId + '-savebtn" ' +
               'onclick="savePubProfile(\'' + safeC + '\',\'' + safeN + '\',\'' + pfx + '\',\'' + rowId + '\')" ' +
@@ -2963,10 +2833,6 @@ function renderHomePublicProfiles() {
                      'font-family:\'Cairo\',\'Tajawal\',sans-serif;transition:opacity 0.15s;display:flex;align-items:center;justify-content:center;gap:6px">' +
               '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>' +
               '\u062d\u0641\u0638 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a' +
-            '</button>' +
-            '<button onclick="confirmDeleteStudent(\'' + safeC + '\',\'' + safeN + '\')" title="حذف المخدوم" ' +
-              'style="width:42px;height:42px;border-radius:var(--radius-sm);border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
-              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
             '</button>' +
           '</div>' +
           '<div id="' + rowId + '-status" style="display:none;text-align:center;font-size:11px;color:var(--muted);padding:5px 0 0"></div>' +
@@ -3216,6 +3082,10 @@ function renderProfileContent(cid, name) {
       '<div>' +
         '<div class="profile-name-lg">' + name + '</div>' +
         '<div class="profile-class-badge">' + cls.icon + ' ' + cls.name + '</div>' +
+        '<div style="margin-top:8px;display:flex;gap:10px">' +
+          '<span style="font-size:11px;color:var(--green)">✓ ' + (totalSessions - totalAbs) + ' حضور</span>' +
+          '<span style="font-size:11px;color:var(--red)">✗ ' + totalAbs + ' غياب</span>' +
+        '</div>' +
       '</div>' +
     '</div>' +
     '<div class="profile-section-title">📋 البيانات الأساسية</div>' +
@@ -3333,13 +3203,14 @@ async function saveProfileScreen() {
 // INIT
 // ═══════════════════════════════════════════════════════════════════
 async function init() {
-  // 1. Render immediately with local data (instant feel)
+  // 1. Show local data immediately so the UI is responsive right away
   renderHome();
   setSyncStatus('syncing');
 
-  // 2. Pull everything from cloud — cloud is the single source of truth
+  // 2. Always pull from cloud first — this ensures existing data is never lost
+  //    regardless of seed version changes.
   try {
-    await pullFromCloud();       // rebuilds attendance + CLASSES.students from cloud
+    await pullFromCloud();
     await pullProfilesFromCloud();
     setSyncStatus('ok');
   } catch(e) {
@@ -3347,10 +3218,19 @@ async function init() {
     setSyncStatus('error');
   }
 
-  // 3. Re-render with fresh cloud data (students, attendance, profiles all updated)
+  // 3. Safe seed — only fills in profiles that are genuinely missing.
+  //    Never deletes anything.
+  const SEED_VERSION = 'v8-arabic-2026-05-01';
+  const seeded = localStorage.getItem('seed_version');
+  if (seeded !== SEED_VERSION) {
+    await nukeAndSeed(); // now safe — only fills gaps, never wipes
+    localStorage.setItem('seed_version', SEED_VERSION);
+  }
+
+  // 4. Re-render with fresh merged data
   renderHome();
 
-  // 4. Start real-time WebSocket + background safety-net poll
+  // 5. Start real-time sync (WebSocket + background safety-net poll)
   startSyncPoll();
 }
 init();
