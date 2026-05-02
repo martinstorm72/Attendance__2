@@ -2630,7 +2630,7 @@ function startRealtime() {
   };
 }
 
-// ── Fallback poll: 2s interval when WebSocket is down ──────────────
+// ── Fallback poll: 20s interval when WebSocket is down ─────────────
 let bgPollInterval = null;
 
 function startFallbackPoll() {
@@ -2645,12 +2645,12 @@ function startFallbackPoll() {
       setSyncStatus('ok');
     } catch(e) { setSyncStatus('error'); }
     scheduleRemoteRefresh('poll');
-  }, 2000);
+  }, 20000);
 }
 
 function startBgPoll() {
   if (bgPollInterval) return;
-  // Safety-net: even with WS up, poll every 5s to catch any missed events
+  // Safety-net: even with WS up, poll every 20s to catch any missed events
   bgPollInterval = setInterval(async function() {
     if (document.visibilityState === 'hidden') return;
     try {
@@ -2660,7 +2660,7 @@ function startBgPoll() {
       const newHash = JSON.stringify(loadData());
       if (newHash !== prevHash) scheduleRemoteRefresh('bgpoll');
     } catch(e) { /* silent */ }
-  }, 5000);
+  }, 20000);
 }
 
 document.addEventListener('visibilitychange', function() {
