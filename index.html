@@ -1083,24 +1083,42 @@ async function pullFromCloud() {
     });
     saveData(db);
 
-    // 2. Extra / deleted students
+// ── 2. Extra / deleted students ────────────────────────────────
     try {
+      // Pull added students
       const studentRows = await sbFetch('extra_students?select=*');
-      const deleted = loadDeletedStudents();
-      const extra   = {};
+      // Pull deleted students from cloud
+      let cloudDeleted = [];
+      try {
+        const delRows = await sbFetch('deleted_students?select=*');
+        if (delRows && delRows.length) {
+          cloudDeleted = delRows.map(r => r.student_key);
+        }
+      } catch(e) { /* table may not exist yet */ }
+
+      // Merge local + cloud deleted lists, save unified list
+      const localDeleted = loadDeletedStudents();
+      const allDeleted = Array.from(new Set([...localDeleted, ...cloudDeleted]));
+      saveDeletedStudents(allDeleted);
+
+      // Rebuild CLASSES students from cloud extra_students, honouring deletions
+      // First reset each class to base empty state (names come from cloud only)
+      CLASSES.forEach(cls => { cls.students = []; });
+
+      const extra = {};
       if (studentRows && studentRows.length) {
         studentRows.forEach(row => {
           const cls = CLASSES.find(c => c.id === row.class_id);
           if (!cls) return;
           const key = row.class_id + '::' + row.name;
-          if (deleted.includes(key)) return;
+          if (allDeleted.includes(key)) return; // skip deleted
           if (!extra[row.class_id]) extra[row.class_id] = [];
           if (!extra[row.class_id].includes(row.name)) extra[row.class_id].push(row.name);
           if (!cls.students.includes(row.name)) cls.students.push(row.name);
         });
       }
       saveExtraStudents(extra);
-    } catch(e) { /* table may not exist yet */ }
+    } catch(e) { console.warn('Student sync failed:', e); }
 
   } catch(e) {
     console.warn('Pull failed:', e);
@@ -2380,7 +2398,17 @@ function confirmAddPerson() {
   const deleted = loadDeletedStudents();
   const key = cid + '::' + name;
   const di = deleted.indexOf(key);
-  if (di !== -1) { deleted.splice(di, 1); saveDeletedStudents(deleted); }
+  if (di !== -1) {
+    deleted.splice(di, 1);
+    saveDeletedStudents(deleted);
+    // Remove from cloud deleted_students too
+    try {
+      sbFetch('deleted_students?student_key=eq.' + encodeURIComponent(key), {
+        method: 'DELETE', prefer: 'return=minimal',
+        headers: { 'Prefer': 'return=minimal' }
+      });
+    } catch(e) { /* silent */ }
+  }
 
   // Mark as unmarked in current session
   if (currentClassId === cid) {
@@ -2419,15 +2447,15 @@ function confirmDeleteStudent(cid, name) {
     '<button class="modal-btn primary" id="confirm-del-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">🗑️ حذف</button>' +
     '<button class="modal-btn secondary" id="cancel-del-btn">إلغاء</button>'
   );
-  document.getElementById('confirm-del-btn').addEventListener('click', function() {
+  document.getElementById('confirm-del-btn').addEventListener('click', async function() {
     // Remove from in-memory CLASSES
     const idx = cls.students.indexOf(name);
     if (idx !== -1) cls.students.splice(idx, 1);
-    // Persist deletion
-    const deleted = loadDeletedStudents();
     const key = cid + '::' + name;
+    // Persist deletion locally
+    const deleted = loadDeletedStudents();
     if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
-    // Remove from extra students if present
+    // Remove from local extra students
     const extra = loadExtraStudents();
     if (extra[cid]) {
       const ei = extra[cid].indexOf(name);
@@ -2435,6 +2463,20 @@ function confirmDeleteStudent(cid, name) {
     }
     // Remove from session data if active
     if (currentClassId === cid && sessionData[name]) delete sessionData[name];
+    // Push deletion to cloud so other devices sync it
+    try {
+      await sbFetch('extra_students?class_id=eq.' + cid + '&name=eq.' + encodeURIComponent(name), {
+        method: 'DELETE', prefer: 'return=minimal',
+        headers: { 'Prefer': 'return=minimal' }
+      });
+    } catch(e) { console.warn('Cloud student delete failed:', e); }
+    try {
+      await sbFetch('deleted_students', {
+        method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
+        headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: { student_key: key }
+      });
+    } catch(e) { /* table may not exist yet */ }
     closeModal();
     if (currentClassId === cid) { renderTab(currentTab); renderStats(); }
     renderHome();
@@ -3291,14 +3333,13 @@ async function saveProfileScreen() {
 // INIT
 // ═══════════════════════════════════════════════════════════════════
 async function init() {
-  // 1. Render home immediately with whatever local data exists (instant load)
+  // 1. Render immediately with local data (instant feel)
   renderHome();
   setSyncStatus('syncing');
 
-  // 2. Pull from cloud — cloud is the single source of truth.
-  //    This always runs and always replaces local with cloud data.
+  // 2. Pull everything from cloud — cloud is the single source of truth
   try {
-    await pullFromCloud();
+    await pullFromCloud();       // rebuilds attendance + CLASSES.students from cloud
     await pullProfilesFromCloud();
     setSyncStatus('ok');
   } catch(e) {
@@ -3306,19 +3347,10 @@ async function init() {
     setSyncStatus('error');
   }
 
-  // 3. Safe seed — only fills in profiles that are genuinely missing.
-  //    Runs once per device but never overwrites existing cloud data.
-  const SEED_VERSION = 'v9-empty-2026-05-02';
-  const seeded = localStorage.getItem('seed_version');
-  if (seeded !== SEED_VERSION) {
-    await nukeAndSeed();
-    localStorage.setItem('seed_version', SEED_VERSION);
-  }
-
-  // 4. Re-render with the fresh cloud data
+  // 3. Re-render with fresh cloud data (students, attendance, profiles all updated)
   renderHome();
 
-  // 5. Start real-time WebSocket + background safety-net poll
+  // 4. Start real-time WebSocket + background safety-net poll
   startSyncPoll();
 }
 init();
