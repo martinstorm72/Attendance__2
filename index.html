@@ -719,12 +719,14 @@
       </div>
       <div class="section-label">الفصول الدراسية</div>
       <div id="class-list"></div>
+      <div class="section-label" style="margin-top:18px">👥 الملفات الشخصية العامة</div>
+      <div id="home-public-profiles"></div>
       <div class="section-label" style="margin-top:18px">🔒 الملفات الشخصية والملاحظات</div>
       <div id="home-profiles-locked">
         <div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius);padding:24px 20px;margin-bottom:12px;text-align:center">
           <div style="font-size:40px;margin-bottom:10px">🔒</div>
           <div style="font-size:15px;font-weight:700;color:var(--white);margin-bottom:4px">قسم محمي بكلمة مرور</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:18px">الملفات الشخصية والملاحظات — للمسؤول فقط</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:18px">الملفات الشخصية والملاحظات</div>
           <div style="display:flex;gap:8px;align-items:center;background:rgba(255,255,255,0.05);border:1px solid var(--card-border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px">
             <input id="profiles-pw-input" type="password" placeholder="أدخل كلمة المرور…" style="flex:1;background:none;border:none;outline:none;color:var(--white);font-size:15px;font-family:'Cairo','Tajawal',sans-serif;direction:rtl;text-align:center;letter-spacing:4px" onkeydown="if(event.key==='Enter')checkProfilesPassword()">
           </div>
@@ -1288,6 +1290,7 @@ function renderHome() {
     list.appendChild(div);
   });
   renderHomeBirthdays();
+  renderHomePublicProfiles();
   if (profilesSectionUnlocked) {
     const lockedDiv = document.getElementById('home-profiles-locked');
     const profilesDiv = document.getElementById('home-profiles');
@@ -1383,17 +1386,22 @@ function renderHomeProfiles() {
     const safeN = item.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     html +=
       '<div class="home-profile-row" data-name="' + item.name.toLowerCase() + '" ' +
-        'onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" ' +
-        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;cursor:pointer;transition:background 0.15s;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
-        avatarImg(color, 40, '') +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
+        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
+        '<div onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" style="display:flex;align-items:center;gap:12px;flex:1;cursor:pointer;min-width:0">' +
+          avatarImg(color, 40, '') +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+            (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
+            '<span style="color:var(--muted);font-size:16px">›</span>' +
+          '</div>' +
         '</div>' +
-        '<div style="display:flex;align-items:center;gap:6px">' +
-          (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
-          '<span style="color:var(--muted);font-size:16px">›</span>' +
-        '</div>' +
+        '<button onclick="confirmDeleteStudent(\'' + item.cid + '\',\'' + safeN + '\')" title="حذف المخدوم" ' +
+          'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;margin-left:4px">' +
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+        '</button>' +
       '</div>';
   });
 
@@ -1477,15 +1485,21 @@ function renderSessionChoice(cid) {
       const p = Object.values(day).filter(v => v === 'present').length;
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
-      html += '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" ' +
-        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">' +
-        '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
-        '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
+      html += '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;padding:12px 14px;display:flex;align-items:center;gap:12px">' +
+        '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" style="flex:1;cursor:pointer">' +
+          '<div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div>' +
+        '</div>' +
         '<div style="display:flex;gap:6px;align-items:center">' +
           '<span style="background:var(--green-bg);color:var(--green-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + p + 'ح</span>' +
           '<span style="background:var(--red-bg);color:var(--red-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + a + 'غ</span>' +
-          '<span style="color:var(--muted);font-size:16px">›</span>' +
-        '</div></div>';
+          '<span onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" style="color:var(--muted);font-size:16px;cursor:pointer">›</span>' +
+          '<button onclick="event.stopPropagation();confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" title="حذف الجلسة" ' +
+            'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>';
     });
   }
 
@@ -1759,16 +1773,23 @@ function renderTab(tab) {
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
       html +=
-        '<div class="hist-item" onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" ' +
-        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;">' +
-          '<div><div class="hist-date">' + label + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
-          '<div style="display:flex;align-items:center;gap:8px">' +
-            '<div class="hist-badges">' +
-              '<span class="mini-badge" style="background:var(--green-bg);color:var(--green-text)">' + p + 'ح</span>' +
-              '<span class="mini-badge" style="background:var(--red-bg);color:var(--red-text)">' + a + 'غ</span>' +
+        '<div class="hist-item" style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:center;gap:8px;">' +
+          '<div onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;padding:12px 14px;">' +
+            '<div><div class="hist-date">' + label + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
+            '<div style="margin-right:auto;display:flex;align-items:center;gap:8px">' +
+              '<div class="hist-badges">' +
+                '<span class="mini-badge" style="background:var(--green-bg);color:var(--green-text)">' + p + 'ح</span>' +
+                '<span class="mini-badge" style="background:var(--red-bg);color:var(--red-text)">' + a + 'غ</span>' +
+              '</div>' +
+              '<span style="color:var(--muted);font-size:16px">›</span>' +
             '</div>' +
-            '<span style="color:var(--muted);font-size:16px">›</span>' +
+          '</div>' +
+          '<div style="padding:0 10px 0 0;flex-shrink:0">' +
+            '<button onclick="confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" title="حذف الجلسة" ' +
+              'style="width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
+              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+            '</button>' +
           '</div>' +
         '</div>';
     });
@@ -2368,6 +2389,75 @@ function confirmAddPerson() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// DELETE STUDENT
+// ═══════════════════════════════════════════════════════════════════
+function confirmDeleteStudent(cid, name) {
+  const cls = CLASSES.find(c => c.id === cid);
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف المخدوم</div>' +
+    '<div class="modal-body">هل أنت متأكد من حذف <strong style="color:white">' + name + '</strong> من <strong style="color:white">' + cls.name + '</strong>؟<br><span style="font-size:11px;color:var(--red)">⚠️ لا يمكن التراجع عن هذا الإجراء</span></div>' +
+    '<button class="modal-btn primary" id="confirm-del-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">🗑️ حذف</button>' +
+    '<button class="modal-btn secondary" id="cancel-del-btn">إلغاء</button>'
+  );
+  document.getElementById('confirm-del-btn').addEventListener('click', function() {
+    // Remove from in-memory CLASSES
+    const idx = cls.students.indexOf(name);
+    if (idx !== -1) cls.students.splice(idx, 1);
+    // Persist deletion
+    const deleted = loadDeletedStudents();
+    const key = cid + '::' + name;
+    if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
+    // Remove from extra students if present
+    const extra = loadExtraStudents();
+    if (extra[cid]) {
+      const ei = extra[cid].indexOf(name);
+      if (ei !== -1) { extra[cid].splice(ei, 1); saveExtraStudents(extra); }
+    }
+    // Remove from session data if active
+    if (currentClassId === cid && sessionData[name]) delete sessionData[name];
+    closeModal();
+    if (currentClassId === cid) { renderTab(currentTab); renderStats(); }
+    renderHome();
+  });
+  document.getElementById('cancel-del-btn').addEventListener('click', closeModal);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE SESSION
+// ═══════════════════════════════════════════════════════════════════
+async function confirmDeleteSession(cid, date) {
+  const cls = CLASSES.find(c => c.id === cid);
+  const label = date === todayStr() ? 'اليوم' : formatDate(date);
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف الجلسة</div>' +
+    '<div class="modal-body">هل أنت متأكد من حذف جلسة <strong style="color:white">' + label + '</strong> في <strong style="color:white">' + cls.name + '</strong>؟<br><span style="font-size:11px;color:var(--red)">⚠️ سيتم حذف جميع بيانات الحضور لهذه الجلسة</span></div>' +
+    '<button class="modal-btn primary" id="confirm-delsess-btn" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">🗑️ حذف الجلسة</button>' +
+    '<button class="modal-btn secondary" id="cancel-delsess-btn">إلغاء</button>'
+  );
+  document.getElementById('confirm-delsess-btn').addEventListener('click', async function() {
+    db = loadData();
+    if (db[cid] && db[cid][date]) {
+      delete db[cid][date];
+      if (db[cid + '_times'] && db[cid + '_times'][date]) delete db[cid + '_times'][date];
+      saveData(db);
+      // Delete from cloud
+      try {
+        await sbFetch('attendance?class_id=eq.' + cid + '&session_date=eq.' + date, {
+          method: 'DELETE',
+          prefer: 'return=minimal',
+          headers: { 'Prefer': 'return=minimal' }
+        });
+      } catch(e) { console.warn('Cloud delete failed:', e); }
+    }
+    closeModal();
+    renderSessionChoice(cid);
+  });
+  document.getElementById('cancel-delsess-btn').addEventListener('click', closeModal);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // REALTIME SYNC — Supabase WebSocket subscriptions + fallback poll
 // ═══════════════════════════════════════════════════════════════════
 
@@ -2692,6 +2782,272 @@ function renderHomeBirthdays() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// HOME PUBLIC PROFILES SECTION
+// Search bar · tap row to expand · inline editing · save per profile
+// ═══════════════════════════════════════════════════════════════════
+let pubProfilesExpanded = false;
+const PUB_PROFILES_INITIAL = 3;
+
+function renderHomePublicProfiles() {
+  const container = document.getElementById('home-public-profiles');
+  if (!container) return;
+
+  const allStudents = [];
+  CLASSES.forEach(function(cls) {
+    cls.students.forEach(function(name, si) {
+      allStudents.push({ name: name, cid: cls.id, cls: cls, si: si });
+    });
+  });
+
+  if (!allStudents.length) {
+    container.innerHTML =
+      '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius);padding:18px;text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px">' +
+        '<div style="font-size:28px;margin-bottom:8px">&#128101;</div>\u0644\u0627 \u064a\u0648\u062c\u062f \u0645\u062e\u062f\u0648\u0645\u064a\u0646 \u0645\u0633\u062c\u0644\u0648\u0646 \u0628\u0639\u062f.' +
+      '</div>';
+    return;
+  }
+
+  const visibleStudents = pubProfilesExpanded ? allStudents : allStudents.slice(0, PUB_PROFILES_INITIAL);
+  const hiddenCount = allStudents.length - PUB_PROFILES_INITIAL;
+
+  function editField(id, icon, label, value, type, dir) {
+    type = type || 'text';
+    dir  = dir  || 'rtl';
+    var esc = (value || '').replace(/"/g, '&quot;');
+    return '<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+      '<span style="font-size:13px;flex-shrink:0;margin-top:10px">' + icon + '</span>' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">' + label + '</div>' +
+        '<input id="' + id + '" type="' + type + '" value="' + esc + '" ' +
+          'style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;' +
+                 'padding:8px 10px;color:var(--white);font-size:13px;font-weight:600;font-family:\'Cairo\',\'Tajawal\',sans-serif;' +
+                 'outline:none;direction:' + dir + ';transition:border-color 0.15s;" ' +
+          'onfocus="this.style.borderColor=\'rgba(79,142,247,0.6)\'" ' +
+          'onblur="this.style.borderColor=\'rgba(255,255,255,0.12)\'">' +
+      '</div>' +
+    '</div>';
+  }
+
+  let rowsHtml = '';
+  visibleStudents.forEach(function(item, idx) {
+    var color   = AV_COLORS[item.si % AV_COLORS.length];
+    var profile = getProfile(item.cid, item.name);
+    var totalAbs      = getAllAbsences(item.cid, item.name);
+    var totalSessions = Object.keys(getClassRecord(item.cid)).length;
+    var totalPres     = totalSessions - totalAbs;
+    var rowId   = 'pub-prof-detail-' + item.cid + '-' + idx;
+    var safeC   = item.cid.replace(/'/g, "\\'");
+    var safeN   = item.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var pfx     = 'ppf-' + item.cid + '-' + idx + '-';
+
+    rowsHtml +=
+      // ── collapsed header (always visible, click to toggle) ──
+      '<div class="home-pub-profile-row" data-name="' + item.name.toLowerCase() + '" ' +
+        'onclick="togglePubProfileDetail(\'' + rowId + '\', this)" ' +
+        'style="display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;' +
+               'transition:background 0.15s;border-bottom:1px solid var(--border);">' +
+        avatarImg(color, 40, '') +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+          '<svg id="' + rowId + '-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.25s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>' +
+        '</div>' +
+      '</div>' +
+
+      // ── expandable edit panel ──
+      '<div id="' + rowId + '" ' +
+        'style="max-height:0;overflow:hidden;transition:max-height 0.38s cubic-bezier(0.16,1,0.3,1);' +
+               'background:rgba(255,255,255,0.025);border-bottom:1px solid var(--border);">' +
+        '<div style="padding:14px 16px 16px" onclick="event.stopPropagation()">' +
+          editField(pfx + 'name',         '\ud83d\udc64', '\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0643\u0627\u0645\u0644',    profile.fullName,    'text', 'rtl') +
+          editField(pfx + 'dob',          '\ud83c\udf82', '\u062a\u0627\u0631\u064a\u062e \u0627\u0644\u0645\u064a\u0644\u0627\u062f',  profile.dob,         'text', 'ltr') +
+          editField(pfx + 'address',      '\ud83c\udfe0', '\u0627\u0644\u0639\u0646\u0648\u0627\u0646',                                   profile.address,     'text', 'rtl') +
+          editField(pfx + 'hobby',        '\ud83c\udfaf', '\u0627\u0644\u0647\u0648\u0627\u064a\u0629',                                   profile.hobby,       'text', 'rtl') +
+          editField(pfx + 'parentName',   '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67', '\u0627\u0633\u0645 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentName, 'text', 'rtl') +
+          editField(pfx + 'parentPhone',  '\ud83d\udcde', '\u0631\u0642\u0645 \u0647\u0627\u062a\u0641 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentPhone, 'tel', 'ltr') +
+          // save + delete buttons
+          '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">' +
+            '<button id="' + rowId + '-savebtn" ' +
+              'onclick="savePubProfile(\'' + safeC + '\',\'' + safeN + '\',\'' + pfx + '\',\'' + rowId + '\')" ' +
+              'style="flex:1;padding:11px;border-radius:var(--radius-sm);background:linear-gradient(135deg,var(--accent),var(--accent-soft));' +
+                     'border:none;color:white;font-size:13px;font-weight:700;cursor:pointer;' +
+                     'font-family:\'Cairo\',\'Tajawal\',sans-serif;transition:opacity 0.15s;display:flex;align-items:center;justify-content:center;gap:6px">' +
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>' +
+              '\u062d\u0641\u0638 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a' +
+            '</button>' +
+            '<button onclick="confirmDeleteStudent(\'' + safeC + '\',\'' + safeN + '\')" title="حذف المخدوم" ' +
+              'style="width:42px;height:42px;border-radius:var(--radius-sm);border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#fca5a5;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s">' +
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+            '</button>' +
+          '</div>' +
+          '<div id="' + rowId + '-status" style="display:none;text-align:center;font-size:11px;color:var(--muted);padding:5px 0 0"></div>' +
+        '</div>' +
+      '</div>';
+  });
+
+  // list-level expand/collapse button
+  var toggleBtn = '';
+  if (allStudents.length > PUB_PROFILES_INITIAL) {
+    if (!pubProfilesExpanded) {
+      toggleBtn =
+        '<button onclick="togglePublicProfiles()" ' +
+          'style="width:100%;padding:13px;border-radius:0 0 var(--radius) var(--radius);background:rgba(79,142,247,0.08);' +
+                 'border:none;border-top:1px solid var(--border);color:var(--accent);font-size:13px;font-weight:700;' +
+                 'cursor:pointer;font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:8px">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+          '\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u00b7 ' + hiddenCount + ' \u0645\u062e\u062f\u0648\u0645 \u0645\u0632\u064a\u062f' +
+        '</button>';
+    } else {
+      toggleBtn =
+        '<button onclick="togglePublicProfiles()" ' +
+          'style="width:100%;padding:13px;border-radius:0 0 var(--radius) var(--radius);background:rgba(255,255,255,0.03);' +
+                 'border:none;border-top:1px solid var(--border);color:var(--muted);font-size:13px;font-weight:700;' +
+                 'cursor:pointer;font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:8px">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>' +
+          '\u0639\u0631\u0636 \u0623\u0642\u0644' +
+        '</button>';
+    }
+  }
+
+  container.innerHTML =
+    '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius);overflow:hidden;margin-bottom:12px">' +
+
+      // ── header ──
+      '<div style="padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">' +
+        '<span style="font-size:16px">&#128101;</span>' +
+        '<div style="flex:1">' +
+          '<div style="font-size:13px;font-weight:700;color:var(--white)">\u0627\u0644\u0645\u062e\u062f\u0648\u0645\u0648\u0646</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:1px">\u0627\u0636\u063a\u0637 \u0639\u0644\u0649 \u0627\u0633\u0645 \u0627\u0644\u0645\u062e\u062f\u0648\u0645 \u0644\u0639\u0631\u0636 \u0648\u062a\u0639\u062f\u064a\u0644 \u0628\u064a\u0627\u0646\u0627\u062a\u0647</div>' +
+        '</div>' +
+        '<span style="background:rgba(79,142,247,0.18);color:var(--accent);font-size:11px;font-weight:700;padding:2px 10px;border-radius:10px">' + allStudents.length + '</span>' +
+      '</div>' +
+
+      // ── search bar ──
+      '<div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.02)">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' +
+        '<input id="pub-profile-search-input" type="text" ' +
+          'placeholder="\u0627\u0628\u062d\u062b \u0639\u0646 \u0645\u062e\u062f\u0648\u0645\u2026" ' +
+          'oninput="filterPublicProfiles(this.value)" ' +
+          'style="flex:1;background:none;border:none;outline:none;color:var(--white);font-size:13px;' +
+                 'font-family:\'Cairo\',\'Tajawal\',sans-serif;direction:rtl;">' +
+        '<button id="pub-profile-search-clear" onclick="clearPubSearch()" ' +
+          'style="display:none;background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 2px;line-height:1;">&#10005;</button>' +
+      '</div>' +
+
+      // ── rows ──
+      '<div id="home-pub-profile-list">' + rowsHtml + '</div>' +
+      toggleBtn +
+    '</div>';
+}
+
+function togglePubProfileDetail(panelId, headerEl) {
+  // Don't toggle if the click came from inside the edit panel
+  var panel   = document.getElementById(panelId);
+  var chevron = document.getElementById(panelId + '-chevron');
+  if (!panel) return;
+  var isOpen = panel.style.maxHeight && panel.style.maxHeight !== '0px';
+  if (isOpen) {
+    panel.style.maxHeight = '0';
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+    headerEl.style.background = '';
+  } else {
+    panel.style.maxHeight = (panel.scrollHeight + 600) + 'px';
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+    headerEl.style.background = 'rgba(79,142,247,0.06)';
+  }
+}
+
+async function savePubProfile(cid, name, pfx, rowId) {
+  var btn    = document.getElementById(rowId + '-savebtn');
+  var status = document.getElementById(rowId + '-status');
+  var panel  = document.getElementById(rowId);
+
+  var updated = {
+    fullName:    (document.getElementById(pfx + 'name')        || {}).value || '',
+    dob:         (document.getElementById(pfx + 'dob')         || {}).value || '',
+    address:     (document.getElementById(pfx + 'address')     || {}).value || '',
+    hobby:       (document.getElementById(pfx + 'hobby')       || {}).value || '',
+    parentName:  (document.getElementById(pfx + 'parentName')  || {}).value || '',
+    parentPhone: (document.getElementById(pfx + 'parentPhone') || {}).value || '',
+  };
+
+  // merge with existing (keep notes etc.)
+  var existing = getProfile(cid, name);
+  updated = Object.assign({}, existing, updated);
+
+  // save locally first
+  setProfile(cid, name, updated);
+
+  // visual feedback
+  if (btn) { btn.textContent = '\u23f3 \u062c\u0627\u0631\u064a\u064b \u0627\u0644\u062d\u0641\u0638\u2026'; btn.disabled = true; }
+  if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = '\u2601\ufe0f \u062c\u0627\u0631\u064a\u064b \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629\u2026'; }
+
+  // push to cloud
+  try {
+    await pushProfileToCloud(getProfileKey(cid, name), updated);
+    if (btn) {
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> \u062a\u0645 \u0627\u0644\u062d\u0641\u0638 \u2713';
+      btn.style.background = 'linear-gradient(135deg,var(--green),#16a34a)';
+      btn.disabled = false;
+    }
+    if (status) { status.style.color = 'var(--green)'; status.textContent = '\u2601\ufe0f \u062a\u0645\u062a \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629 \u2713'; }
+  } catch(e) {
+    if (btn) {
+      btn.textContent = '\u2705 \u0645\u062d\u0641\u0648\u0638 \u0645\u062d\u0644\u064a\u064b\u0627';
+      btn.style.background = 'linear-gradient(135deg,var(--amber),#d97706)';
+      btn.disabled = false;
+    }
+    if (status) { status.style.color = 'var(--amber)'; status.textContent = '\u26a0\ufe0f \u0645\u062d\u0641\u0648\u0638 \u0645\u062d\u0644\u064a\u064b\u0627 \u0641\u0642\u0637 (\u0628\u062f\u0648\u0646 \u0627\u062a\u0635\u0627\u0644)'; }
+  }
+
+  // expand panel to ensure new height fits
+  if (panel) panel.style.maxHeight = (panel.scrollHeight + 600) + 'px';
+
+  setTimeout(function() {
+    if (btn) {
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> \u062d\u0641\u0638 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a';
+      btn.style.background = '';
+    }
+    if (status) status.style.display = 'none';
+  }, 3000);
+}
+
+function togglePublicProfiles() {
+  pubProfilesExpanded = !pubProfilesExpanded;
+  renderHomePublicProfiles();
+}
+
+function filterPublicProfiles(query) {
+  var q = query.trim().toLowerCase();
+  // show/hide clear button
+  var clearBtn = document.getElementById('pub-profile-search-clear');
+  if (clearBtn) clearBtn.style.display = q ? 'block' : 'none';
+
+  var rows = document.querySelectorAll('#home-pub-profile-list .home-pub-profile-row');
+  rows.forEach(function(row) {
+    var name = row.getAttribute('data-name') || '';
+    var match = !q || name.includes(q);
+    row.style.display = match ? '' : 'none';
+    // also hide the associated detail panel when row is hidden
+    var panelId = row.getAttribute('onclick');
+    if (panelId) {
+      var m = panelId.match(/togglePubProfileDetail\('([^']+)'/);
+      if (m) {
+        var p = document.getElementById(m[1]);
+        if (p) p.style.display = match ? '' : 'none';
+      }
+    }
+  });
+}
+
+function clearPubSearch() {
+  var inp = document.getElementById('pub-profile-search-input');
+  if (inp) { inp.value = ''; filterPublicProfiles(''); inp.focus(); }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // RIPPLE EFFECT HELPER
 // ═══════════════════════════════════════════════════════════════════
 function addRipple(el, e) {
@@ -2773,10 +3129,6 @@ function renderProfileContent(cid, name) {
       '<div>' +
         '<div class="profile-name-lg">' + name + '</div>' +
         '<div class="profile-class-badge">' + cls.icon + ' ' + cls.name + '</div>' +
-        '<div style="margin-top:8px;display:flex;gap:10px">' +
-          '<span style="font-size:11px;color:var(--green)">✓ ' + (totalSessions - totalAbs) + ' حضور</span>' +
-          '<span style="font-size:11px;color:var(--red)">✗ ' + totalAbs + ' غياب</span>' +
-        '</div>' +
       '</div>' +
     '</div>' +
     '<div class="profile-section-title">📋 البيانات الأساسية</div>' +
