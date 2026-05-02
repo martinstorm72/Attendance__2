@@ -1386,16 +1386,22 @@ function renderHomeProfiles() {
     const safeN = item.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     html +=
       '<div class="home-profile-row" data-name="' + item.name.toLowerCase() + '" ' +
-        'onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" ' +
-        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;cursor:pointer;transition:background 0.15s;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
-        avatarImg(color, 40, '') +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
+        'style="display:flex;align-items:center;gap:12px;padding:11px 14px;transition:background 0.15s;' + (!isLast ? 'border-bottom:1px solid var(--border);' : '') + '">' +
+        '<div onclick="openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" style="display:flex;align-items:center;gap:12px;flex:1;cursor:pointer;min-width:0">' +
+          avatarImg(color, 40, '') +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:14px;font-weight:600;color:var(--white)">' + item.name + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + item.cls.icon + ' ' + item.cls.name + '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:6px">' +
+            (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
+          '</div>' +
         '</div>' +
-        '<div style="display:flex;align-items:center;gap:6px">' +
-          (hasData ? '<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:10px;font-weight:600">✓ مكتمل</span>' : '<span style="font-size:10px;color:var(--text-hint)">فارغ</span>') +
-          '<span style="color:var(--muted);font-size:16px">›</span>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0;margin-right:4px">' +
+          '<button onclick="event.stopPropagation();openProfileFromHome(\'' + item.cid + '\',\'' + safeN + '\')" ' +
+          'style="padding:5px 10px;border-radius:20px;background:rgba(79,142,247,0.15);border:1px solid rgba(79,142,247,0.3);color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;font-family:\'Cairo\',\'Tajawal\',sans-serif;white-space:nowrap">✏️ تعديل</button>' +
+          '<button onclick="event.stopPropagation();confirmDeleteProfile2(\'' + item.cid + '\',\'' + safeN + '\')" ' +
+          'style="padding:5px 10px;border-radius:20px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);color:#fca5a5;font-size:11px;font-weight:700;cursor:pointer;font-family:\'Cairo\',\'Tajawal\',sans-serif;white-space:nowrap">🗑️ حذف</button>' +
         '</div>' +
       '</div>';
   });
@@ -1480,15 +1486,22 @@ function renderSessionChoice(cid) {
       const p = Object.values(day).filter(v => v === 'present').length;
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
-      html += '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" ' +
-        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">' +
-        '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
-        '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
-        '<div style="display:flex;gap:6px;align-items:center">' +
-          '<span style="background:var(--green-bg);color:var(--green-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + p + 'ح</span>' +
-          '<span style="background:var(--red-bg);color:var(--red-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + a + 'غ</span>' +
-          '<span style="color:var(--muted);font-size:16px">›</span>' +
-        '</div></div>';
+      html += '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:stretch;overflow:hidden">' +
+        '<div onclick="openSessionForEdit(\'' + cid + '\',\'' + date + '\')" ' +
+        'style="flex:1;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">' +
+          '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--white)">' + label + '</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
+          '<div style="display:flex;gap:6px;align-items:center">' +
+            '<span style="background:var(--green-bg);color:var(--green-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + p + 'ح</span>' +
+            '<span style="background:var(--red-bg);color:var(--red-text);font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px">' + a + 'غ</span>' +
+            '<span style="color:var(--muted);font-size:16px">›</span>' +
+          '</div>' +
+        '</div>' +
+        '<button onclick="event.stopPropagation();confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" ' +
+        'style="width:44px;background:rgba(239,68,68,0.1);border:none;border-right:1px solid rgba(239,68,68,0.2);' +
+        'color:#fca5a5;font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;' +
+        'transition:background 0.15s" title="حذف الجلسة">🗑️</button>' +
+      '</div>';
     });
   }
 
@@ -1762,17 +1775,21 @@ function renderTab(tab) {
       const a = Object.values(day).filter(v => v === 'absent').length;
       const label = date === todayStr() ? 'اليوم' : formatDate(date);
       html +=
-        '<div class="hist-item" onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" ' +
-        'style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;">' +
-          '<div><div class="hist-date">' + label + '</div>' +
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
-          '<div style="display:flex;align-items:center;gap:8px">' +
-            '<div class="hist-badges">' +
+        '<div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:stretch;overflow:hidden">' +
+          '<div class="hist-item" onclick="openHistDetail(\'' + cid + '\',\'' + date + '\',\'class\')" ' +
+          'style="flex:1;padding:12px 14px;display:flex;align-items:center;gap:8px;border:none;background:none">' +
+            '<div style="flex:1"><div class="hist-date">' + label + '</div>' +
+            '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + (p+a) + ' مخدوم</div></div>' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
               '<span class="mini-badge" style="background:var(--green-bg);color:var(--green-text)">' + p + 'ح</span>' +
               '<span class="mini-badge" style="background:var(--red-bg);color:var(--red-text)">' + a + 'غ</span>' +
+              '<span style="color:var(--muted);font-size:16px">›</span>' +
             '</div>' +
-            '<span style="color:var(--muted);font-size:16px">›</span>' +
           '</div>' +
+          '<button onclick="event.stopPropagation();confirmDeleteSession(\'' + cid + '\',\'' + date + '\')" ' +
+          'style="width:44px;background:rgba(239,68,68,0.1);border:none;border-right:1px solid rgba(239,68,68,0.2);' +
+          'color:#fca5a5;font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;' +
+          'transition:background 0.15s" title="حذف الجلسة">🗑️</button>' +
         '</div>';
     });
     html += '</div><div class="bottom-safe"></div>';
@@ -2259,6 +2276,159 @@ function openHistDetail(cid, date, from) {
   html += '</div><div class="bottom-safe"></div>';
   document.getElementById('hist-detail-content').innerHTML = html;
   showScreen('screen-hist-detail');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE SESSION
+// ═══════════════════════════════════════════════════════════════════
+function confirmDeleteSession(cid, date) {
+  const cls = CLASSES.find(c => c.id === cid);
+  const label = date === todayStr() ? 'اليوم' : formatDate(date);
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف الجلسة</div>' +
+    '<div class="modal-body">هل أنت متأكد من حذف جلسة <strong style="color:white">' + label + '</strong> من <strong style="color:white">' + cls.name + '</strong>؟<br><span style="color:var(--red);font-size:12px">لا يمكن التراجع عن هذا الإجراء.</span></div>' +
+    '<button class="modal-btn primary" id="del-session-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الجلسة</button>' +
+    '<button class="modal-btn secondary" id="del-session-cancel">إلغاء</button>'
+  );
+  document.getElementById('del-session-confirm').addEventListener('click', function() {
+    deleteSession(cid, date);
+    closeModal();
+  });
+  document.getElementById('del-session-cancel').addEventListener('click', closeModal);
+}
+
+async function deleteSession(cid, date) {
+  // Remove locally
+  db = loadData();
+  if (db[cid]) {
+    delete db[cid][date];
+    if (db[cid + '_times']) delete db[cid + '_times'][date];
+    saveData(db);
+  }
+  // Remove from cloud
+  try {
+    await sbFetch('attendance?class_id=eq.' + encodeURIComponent(cid) + '&session_date=eq.' + encodeURIComponent(date), {
+      method: 'DELETE',
+      prefer: 'return=minimal',
+      headers: { 'Prefer': 'return=minimal' }
+    });
+  } catch(e) { console.warn('Cloud session delete failed:', e); }
+  // Refresh UI
+  const active = document.querySelector('.screen.active');
+  if (active && active.id === 'screen-class') {
+    renderTab(currentTab);
+    renderStats();
+  } else if (active && active.id === 'screen-session-choice') {
+    renderSessionChoice(cid);
+  }
+  renderHome();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE PROFILE
+// ═══════════════════════════════════════════════════════════════════
+function confirmDeleteProfile() {
+  const cid = profileCurrentCid;
+  const name = profileCurrentName;
+  if (!cid || !name) return;
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف الملف الشخصي</div>' +
+    '<div class="modal-body">هل تريد حذف بيانات ملف <strong style="color:white">' + name + '</strong>؟<br><span style="font-size:12px;color:var(--muted)">سيتم حذف جميع البيانات الشخصية والملاحظات.</span></div>' +
+    '<button class="modal-btn primary" id="del-prof-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
+    '<button class="modal-btn secondary" id="del-prof-cancel">إلغاء</button>'
+  );
+  document.getElementById('del-prof-confirm').addEventListener('click', function() {
+    deleteProfileData(cid, name);
+    closeModal();
+    // Go back after deleting
+    showScreen('screen-class');
+  });
+  document.getElementById('del-prof-cancel').addEventListener('click', closeModal);
+}
+
+// Called from home profiles list
+function confirmDeleteProfile2(cid, name) {
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف الملف الشخصي</div>' +
+    '<div class="modal-body">هل تريد حذف بيانات ملف <strong style="color:white">' + name + '</strong>؟<br><span style="font-size:12px;color:var(--muted)">سيتم حذف جميع البيانات الشخصية والملاحظات.</span></div>' +
+    '<button class="modal-btn primary" id="del-prof2-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
+    '<button class="modal-btn secondary" id="del-prof2-cancel">إلغاء</button>'
+  );
+  document.getElementById('del-prof2-confirm').addEventListener('click', function() {
+    deleteProfileData(cid, name);
+    closeModal();
+    renderHomeProfiles();
+  });
+  document.getElementById('del-prof2-cancel').addEventListener('click', closeModal);
+}
+
+async function deleteProfileData(cid, name) {
+  const key = getProfileKey(cid, name);
+  // Remove locally
+  const profiles = loadProfiles();
+  delete profiles[key];
+  saveProfiles(profiles);
+  // Remove from cloud
+  try {
+    await sbFetch('student_profiles?student_key=eq.' + encodeURIComponent(key), {
+      method: 'DELETE',
+      prefer: 'return=minimal',
+      headers: { 'Prefer': 'return=minimal' }
+    });
+  } catch(e) { console.warn('Cloud profile delete failed:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE STUDENT
+// ═══════════════════════════════════════════════════════════════════
+function confirmDeleteStudent(cid, name) {
+  const cls = CLASSES.find(c => c.id === cid);
+  showModal(
+    '<div class="modal-icon">🗑️</div>' +
+    '<div class="modal-title">حذف المخدوم</div>' +
+    '<div class="modal-body">هل أنت متأكد من حذف <strong style="color:white">' + name + '</strong> من <strong style="color:white">' + cls.name + '</strong>؟<br><span style="color:var(--red);font-size:12px">سيتم حذف المخدوم نهائياً.</span></div>' +
+    '<button class="modal-btn primary" id="del-stu-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف</button>' +
+    '<button class="modal-btn secondary" id="del-stu-cancel">إلغاء</button>'
+  );
+  document.getElementById('del-stu-confirm').addEventListener('click', function() {
+    doDeleteStudent(cid, name);
+    closeModal();
+  });
+  document.getElementById('del-stu-cancel').addEventListener('click', closeModal);
+}
+
+async function doDeleteStudent(cid, name) {
+  const cls = CLASSES.find(c => c.id === cid);
+  // Remove from in-memory
+  const idx = cls.students.indexOf(name);
+  if (idx !== -1) cls.students.splice(idx, 1);
+  // Persist deletion locally
+  const deleted = loadDeletedStudents();
+  const key = cid + '::' + name;
+  if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
+  // Remove from extra students locally
+  const extra = loadExtraStudents();
+  if (extra[cid]) {
+    extra[cid] = extra[cid].filter(n => n !== name);
+    saveExtraStudents(extra);
+  }
+  // Remove from session data
+  delete sessionData[name];
+  // Remove from cloud
+  try {
+    await sbFetch('extra_students?class_id=eq.' + encodeURIComponent(cid) + '&name=eq.' + encodeURIComponent(name), {
+      method: 'DELETE',
+      prefer: 'return=minimal',
+      headers: { 'Prefer': 'return=minimal' }
+    });
+  } catch(e) { console.warn('Cloud student delete failed:', e); }
+  // Refresh UI
+  renderTab(currentTab);
+  renderStats();
+  renderHome();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3158,6 +3328,7 @@ function renderProfileContent(cid, name) {
     '</div>' +
     '<button class="profile-save-btn" id="profile-save-btn" onclick="saveProfileScreen()">💾 حفظ الملف الشخصي</button>' +
     '<div id="profile-sync-status" style="text-align:center;font-size:11px;color:var(--muted);padding:6px 0 4px;display:none"></div>' +
+    '<button onclick="confirmDeleteProfile()" style="width:100%;padding:13px;border-radius:var(--radius);background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:8px">🗑️ حذف الملف الشخصي</button>' +
     '<div class="bottom-safe"></div>';
 }
 function openProfile(cid, name) {
