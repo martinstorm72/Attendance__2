@@ -1834,11 +1834,14 @@
       </div>
       <!-- Sync bar -->
       <div style="padding:0 20px 10px;flex-shrink:0">
-        <div id="sync-indicator"
-          style="font-size:11px;color:var(--muted);font-family:'Cairo','Tajawal',sans-serif;display:flex;align-items:center">
-          <span
-            style="width:7px;height:7px;border-radius:50%;background:#64748b;display:inline-block;margin-left:5px"></span>المزامنة
-          السحابية
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div id="sync-indicator"
+            style="font-size:11px;color:var(--muted);font-family:'Cairo','Tajawal',sans-serif;display:flex;align-items:center">
+            <span
+              style="width:7px;height:7px;border-radius:50%;background:#64748b;display:inline-block;margin-left:5px"></span>المزامنة
+            السحابية
+          </div>
+          <button onclick="openDebugPanel()" style="background:rgba(79,142,247,0.15);border:1px solid rgba(79,142,247,0.3);color:var(--accent);font-size:10px;padding:3px 10px;border-radius:12px;cursor:pointer;font-family:'Cairo','Tajawal',sans-serif">🔍 تشخيص</button>
         </div>
       </div>
       <div class="scroll-content">
@@ -1976,6 +1979,17 @@
 
   </div><!-- end #app -->
 
+  <!-- ══ DEBUG PANEL ══ -->
+  <div id="debug-panel" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.95);overflow-y:auto;padding:16px;font-family:monospace;font-size:12px;color:#e2e8f0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid #334155;padding-bottom:10px">
+      <div style="font-size:15px;font-weight:700;color:#4f8ef7">🔍 Debug Panel</div>
+      <button onclick="document.getElementById('debug-panel').style.display='none'" style="background:#ef4444;border:none;color:white;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px">✕ إغلاق</button>
+    </div>
+    <div id="debug-content" style="white-space:pre-wrap;line-height:1.7"></div>
+    <button onclick="refreshDebug()" style="margin-top:12px;background:#4f8ef7;border:none;color:white;padding:8px 20px;border-radius:8px;cursor:pointer;font-size:13px;width:100%">🔄 تحديث</button>
+  </div>
+
+
   <!-- Modal -->
   <div id="modal" style="display:none"></div>
 
@@ -2053,8 +2067,8 @@
     // ═══════════════════════════════════════════════════════════════════
     // SUPABASE CONFIG
     // ═══════════════════════════════════════════════════════════════════
-    const SUPABASE_URL = 'https://ncgjtnceblmjkbwfhvsu.supabase.co';
-    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZ2p0bmNiYmxtamtid2ZodnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3Mjg1OTUsImV4cCI6MjA5MjMwNDU5NX0.X2IExv-xpAPo5k5vcByzNaVJibG64JZKhY-UTJgU4YA';
+    const SUPABASE_URL = 'https://qfskjgjoarhmmtwvsclg.supabase.co';
+    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmc2tqZ2pvYXJobW10d3ZzY2xnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDU0MzEsImV4cCI6MjA5MzMyMTQzMX0.KM5t-JvT1hOATnc0z9KAWJ4FwTwIT91Ihf9cPqZWJBY';
 
     async function sbFetch(path, opts = {}) {
       const res = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
@@ -2319,14 +2333,31 @@
     // ═══════════════════════════════════════════════════════════════════
     async function pushExtraStudent(cid, name) {
       try {
-        await sbFetch('extra_students?on_conflict=class_id,name', {
+        // Try upsert first (requires unique constraint on class_id,name)
+        const res = await fetch(SUPABASE_URL + '/rest/v1/extra_students', {
           method: 'POST',
-          prefer: 'resolution=merge-duplicates,return=minimal',
-          headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-          body: { class_id: cid, name: name }
+          mode: 'cors',
+          cache: 'no-cache',
+          headers: {
+            'apikey': SUPABASE_ANON,
+            'Authorization': 'Bearer ' + SUPABASE_ANON,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify({ class_id: cid, name: name })
         });
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error('pushExtraStudent HTTP ' + res.status + ':', errText);
+          window._lastPushError = 'HTTP ' + res.status + ': ' + errText;
+          throw new Error(errText);
+        } else {
+          console.log('✅ pushExtraStudent OK:', cid, name);
+          window._lastPushError = null;
+        }
       } catch (e) {
-        console.warn('Extra student push failed:', e);
+        console.error('pushExtraStudent FAILED:', e.message);
+        window._lastPushError = e.message;
       }
     }
 
@@ -4596,6 +4627,113 @@
       }, 3000);
     }
     // ═══════════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DEBUG PANEL
+    // ═══════════════════════════════════════════════════════════════════
+    async function openDebugPanel() {
+      document.getElementById('debug-panel').style.display = 'block';
+      await refreshDebug();
+    }
+
+    async function refreshDebug() {
+      const out = document.getElementById('debug-content');
+      out.textContent = '⏳ جارٍ الجلب...';
+      let lines = [];
+
+      // 1. WebSocket status
+      const wsState = ['CONNECTING','OPEN','CLOSING','CLOSED'];
+      const wsStatus = realtimeSocket ? wsState[realtimeSocket.readyState] : 'NOT CREATED';
+      lines.push('━━━ WebSocket ━━━');
+      lines.push('Status: ' + wsStatus + (realtimeOk ? ' ✅' : ' ❌'));
+      lines.push('');
+
+      // 2. LocalStorage
+      lines.push('━━━ LocalStorage ━━━');
+      const extra = loadExtraStudents();
+      const deleted = loadDeletedStudents();
+      lines.push('extra_students: ' + JSON.stringify(extra, null, 2));
+      lines.push('deleted_students: ' + JSON.stringify(deleted));
+      lines.push('');
+
+      // 3. In-memory CLASSES
+      lines.push('━━━ CLASSES in memory ━━━');
+      CLASSES.forEach(function(c) {
+        lines.push(c.name + ' (' + c.id + '): [' + c.students.join(', ') + ']');
+      });
+      lines.push('');
+
+      // 4. Supabase cloud
+      lines.push('━━━ Supabase Cloud ━━━');
+      try {
+        const rows = await sbFetch('extra_students?select=*&order=id.asc');
+        lines.push('extra_students table (' + (rows ? rows.length : 0) + ' rows):');
+        if (rows && rows.length) {
+          rows.forEach(function(r) { lines.push('  id:' + r.id + ' class:' + r.class_id + ' name:' + r.name); });
+        } else {
+          lines.push('  (empty)');
+        }
+      } catch(e) {
+        lines.push('extra_students fetch ERROR: ' + e.message);
+      }
+
+      lines.push('');
+      try {
+        const drows = await sbFetch('deleted_students?select=*');
+        lines.push('deleted_students table (' + (drows ? drows.length : 0) + ' rows):');
+        if (drows && drows.length) {
+          drows.forEach(function(r) { lines.push('  key:' + r.student_key); });
+        } else {
+          lines.push('  (empty)');
+        }
+      } catch(e) {
+        lines.push('deleted_students fetch ERROR: ' + e.message);
+      }
+
+      lines.push('');
+      lines.push('━━━ Last Push Error ━━━');
+      lines.push(window._lastPushError || '(none — no error recorded)');
+      lines.push('');
+
+      // Live test: try to insert a test row RIGHT NOW
+      lines.push('━━━ Live Push Test ━━━');
+      try {
+        const testRes = await fetch(SUPABASE_URL + '/rest/v1/extra_students', {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'apikey': SUPABASE_ANON,
+            'Authorization': 'Bearer ' + SUPABASE_ANON,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify({ class_id: '__debug__', name: '__test__' })
+        });
+        const testBody = await testRes.text();
+        lines.push('Status: ' + testRes.status + ' ' + testRes.statusText);
+        lines.push('Response: ' + testBody.substring(0, 200));
+        if (testRes.ok) {
+          // Clean up test row
+          fetch(SUPABASE_URL + '/rest/v1/extra_students?class_id=eq.__debug__&name=eq.__test__', {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_ANON, 'Authorization': 'Bearer ' + SUPABASE_ANON, 'Prefer': 'return=minimal' }
+          });
+          lines.push('✅ Push works! Problem is elsewhere.');
+        } else {
+          lines.push('❌ Push is BROKEN — this is the root cause.');
+        }
+      } catch(e) {
+        lines.push('❌ Push threw exception: ' + e.message);
+      }
+      lines.push('');
+
+      lines.push('━━━ Browser ━━━');
+      lines.push('UserAgent: ' + navigator.userAgent.substring(0, 80));
+      lines.push('Time: ' + new Date().toLocaleTimeString());
+
+      out.textContent = lines.join('\n');
+    }
+
     async function init() {
       // One-time migration: clear locally-cached students from old hardcoded lists.
       const MIGRATION_KEY = 'migration_clear_hardcoded_v1';
