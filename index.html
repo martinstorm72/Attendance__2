@@ -1059,60 +1059,57 @@ function setSyncStatus(s) {
 
 
 // ═══════════════════════════════════════════════════════════════════
-// CLOUD SYNC — PULL (fetch all records from Supabase)
+// CLOUD SYNC — PULL (cloud is always the single source of truth)
 // ═══════════════════════════════════════════════════════════════════
 async function pullFromCloud() {
   try {
+    // 1. Attendance
     const rows = await sbFetch('attendance?select=*&order=session_date.desc', {
-      headers: { 'Range': '0-999' }
+      headers: { 'Range': '0-9999' }
     });
-    if (!rows || !rows.length) { return; }
 
-    // Rebuild db from cloud rows
     const cloudDb = {};
-    rows.forEach(row => {
-      const cid = row.class_id;
-      const date = row.session_date;
-      if (!cloudDb[cid]) cloudDb[cid] = {};
-      if (!cloudDb[cid + '_times']) cloudDb[cid + '_times'] = {};
-      cloudDb[cid][date] = row.statuses || {};
-      if (row.times) cloudDb[cid + '_times'][date] = row.times;
-    });
+    if (rows && rows.length) {
+      rows.forEach(row => {
+        const cid  = row.class_id;
+        const date = row.session_date;
+        if (!cloudDb[cid]) cloudDb[cid] = {};
+        if (!cloudDb[cid + '_times']) cloudDb[cid + '_times'] = {};
+        cloudDb[cid][date] = row.statuses || {};
+        if (row.times) cloudDb[cid + '_times'][date] = row.times;
+      });
+    }
 
-    // Deep merge: start with local data, then overlay cloud data per-class per-date.
-    // Cloud wins on any date both have; local-only dates/keys are preserved.
+    // Cloud fully replaces local for every class — cloud is the single source of truth
     const local = loadData();
     db = { ...local };
     CLASSES.forEach(cls => {
-      // Merge attendance dates
-      if (cloudDb[cls.id]) {
-        db[cls.id] = Object.assign({}, local[cls.id] || {}, cloudDb[cls.id]);
+      if (cloudDb[cls.id] !== undefined) {
+        db[cls.id] = cloudDb[cls.id];
       }
-      // Merge times
-      if (cloudDb[cls.id + '_times']) {
-        db[cls.id + '_times'] = Object.assign({}, (local[cls.id + '_times'] || {}), cloudDb[cls.id + '_times']);
+      if (cloudDb[cls.id + '_times'] !== undefined) {
+        db[cls.id + '_times'] = cloudDb[cls.id + '_times'];
       }
     });
     saveData(db);
 
-    // Also pull extra students added via cloud
+    // 2. Extra / deleted students
     try {
       const studentRows = await sbFetch('extra_students?select=*');
+      const deleted = loadDeletedStudents();
+      const extra   = {};
       if (studentRows && studentRows.length) {
-        const extra = loadExtraStudents();
-        const deleted = loadDeletedStudents();
         studentRows.forEach(row => {
           const cls = CLASSES.find(c => c.id === row.class_id);
           if (!cls) return;
           const key = row.class_id + '::' + row.name;
-          if (deleted.includes(key)) return; // skip deleted students
-          if (!cls.students.includes(row.name)) cls.students.push(row.name);
-          // Also persist locally
+          if (deleted.includes(key)) return;
           if (!extra[row.class_id]) extra[row.class_id] = [];
           if (!extra[row.class_id].includes(row.name)) extra[row.class_id].push(row.name);
+          if (!cls.students.includes(row.name)) cls.students.push(row.name);
         });
-        saveExtraStudents(extra);
       }
+      saveExtraStudents(extra);
     } catch(e) { /* table may not exist yet */ }
 
   } catch(e) {
@@ -1181,9 +1178,19 @@ async function pullProfilesFromCloud() {
   try {
     const rows = await sbFetch('student_profiles?select=*');
     if (!rows || !rows.length) return;
-    const local = loadProfiles();
-    rows.forEach(row => { local[row.student_key] = row.profile; });
-    saveProfiles(local);
+    // Cloud always wins — fully replace local profiles with cloud data
+    const profiles = loadProfiles();
+    rows.forEach(row => {
+      if (!row.student_key) return;
+      const cloudUpdated = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+      const local = profiles[row.student_key];
+      const localUpdated = (local && local._updated_at) ? new Date(local._updated_at).getTime() : 0;
+      // Cloud wins unless local is strictly newer (user edited this device very recently)
+      if (!local || cloudUpdated >= localUpdated) {
+        profiles[row.student_key] = row.profile || {};
+      }
+    });
+    saveProfiles(profiles);
   } catch(e) { /* table may not exist yet */ }
 }
 
@@ -1194,9 +1201,10 @@ function getProfile(cid, name) {
 }
 function setProfile(cid, name, data) {
   const profiles = loadProfiles();
-  profiles[getProfileKey(cid, name)] = data;
+  const stamped = { ...data, _updated_at: new Date().toISOString() };
+  profiles[getProfileKey(cid, name)] = stamped;
   saveProfiles(profiles);
-  pushProfileToCloud(getProfileKey(cid, name), data);
+  pushProfileToCloud(getProfileKey(cid, name), stamped);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2101,6 +2109,7 @@ function setStatus(sid, status) {
   renderTab('attend');
 
   // Push this single student's change to cloud immediately (live multi-device)
+  // Always merge into the full existing cloud record so we never clobber other users' entries
   const cid = currentClassId;
   const date = todayStr();
   if (cid) {
@@ -2110,7 +2119,9 @@ function setStatus(sid, status) {
     if (!db[cid + '_times']) db[cid + '_times'] = {};
     if (!db[cid + '_times'][date]) db[cid + '_times'][date] = {};
     if (status === 'present') db[cid + '_times'][date][sid] = sessionTimes[sid];
+    else delete db[cid + '_times'][date][sid];
     saveData(db);
+    // Send the complete merged record so cloud always has the full picture
     pushToCloud(cid, date, { ...db[cid][date] }, { ...(db[cid + '_times'][date] || {}) });
   }
 
@@ -2499,15 +2510,17 @@ function onRemoteChange(source) {
   } else if (id === 'screen-session-choice') {
     if (currentClassId) renderSessionChoice(currentClassId);
   } else if (id === 'screen-class') {
-    // Merge remote attendance into live sessionData without clobbering local unmarked entries
+    // Reload sessionData from the fresh cloud record.
+    // Preserve any local status that is NOT yet in the cloud (user just tapped it).
     if (currentClassId) {
       const remoteDay = (db[currentClassId] || {})[todayStr()] || {};
+      // If user is actively marking, only pull in remote entries for students
+      // this device hasn't touched yet (status is still 'unmarked' or undefined).
       Object.keys(remoteDay).forEach(function(s) {
-        // Only update if: this device hasn't actively set this student yet
-        if (!userIsActive && (sessionData[s] === 'unmarked' || sessionData[s] === undefined)) {
+        if (sessionData[s] === undefined || sessionData[s] === 'unmarked') {
           sessionData[s] = remoteDay[s];
-        } else if (!userIsActive && remoteDay[s] !== sessionData[s] && remoteDay[s] !== 'unmarked') {
-          // Accept remote change for this student only if local is also saved state
+        } else if (!userIsActive) {
+          // User stopped tapping — accept remote value for all students
           sessionData[s] = remoteDay[s];
         }
       });
@@ -3288,12 +3301,12 @@ async function saveProfileScreen() {
 // INIT
 // ═══════════════════════════════════════════════════════════════════
 async function init() {
-  // 1. Show local data immediately so the UI is responsive right away
+  // 1. Render home immediately with whatever local data exists (instant load)
   renderHome();
   setSyncStatus('syncing');
 
-  // 2. Always pull from cloud first — this ensures existing data is never lost
-  //    regardless of seed version changes.
+  // 2. Pull from cloud — cloud is the single source of truth.
+  //    This always runs and always replaces local with cloud data.
   try {
     await pullFromCloud();
     await pullProfilesFromCloud();
@@ -3304,18 +3317,18 @@ async function init() {
   }
 
   // 3. Safe seed — only fills in profiles that are genuinely missing.
-  //    Never deletes anything.
+  //    Runs once per device but never overwrites existing cloud data.
   const SEED_VERSION = 'v8-arabic-2026-05-01';
   const seeded = localStorage.getItem('seed_version');
   if (seeded !== SEED_VERSION) {
-    await nukeAndSeed(); // now safe — only fills gaps, never wipes
+    await nukeAndSeed();
     localStorage.setItem('seed_version', SEED_VERSION);
   }
 
-  // 4. Re-render with fresh merged data
+  // 4. Re-render with the fresh cloud data
   renderHome();
 
-  // 5. Start real-time sync (WebSocket + background safety-net poll)
+  // 5. Start real-time WebSocket + background safety-net poll
   startSyncPoll();
 }
 init();
