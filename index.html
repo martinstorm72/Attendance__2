@@ -914,22 +914,12 @@ const CLASSES = [
   {
     id: 'c1', name: 'أولى ابتدائي', sub: 'الصف الأول',
     icon: '١', color: '#4f8ef7', bg: 'rgba(79,142,247,0.15)',
-    students: [
-      'مريم جورج', 'بيشوي ميلاد', 'مارينا سمير', 'كيرلس فادي',
-      'ماريان رامي', 'فيلوباتير يوسف', 'إيريني نبيل', 'مينا إسحاق',
-      'كريستين عاطف', 'أبانوب ماهر', 'ريجينا أنطوان', 'جرجس أيمن',
-      'سالي سعد', 'بولا نصر', 'مارك نادر'
-    ]
+    students: []
   },
   {
     id: 'c2', name: 'تانية ابتدائي', sub: 'الصف الثاني',
     icon: '٢', color: '#22c55e', bg: 'rgba(34,197,94,0.15)',
-    students: [
-      'ماريا ميخائيل', 'بيتر عزيز', 'ندى وليم', 'إبراهيم جميل',
-      'ستيفاني رفعت', 'يوسف سعيد', 'أميلي منصور', 'مارتينا طارق',
-      'ميناس هاني', 'فيكتوريا عصام', 'إريك مجدي', 'جولي صبري',
-      'مارك سامي', 'نانسي راعي', 'بيشوي رفيق'
-    ]
+    students: []
   },
   {
     id: 'c3', name: 'تالتة ابتدائي', sub: 'الصف الثالث',
@@ -3318,7 +3308,7 @@ async function init() {
 
   // 3. Safe seed — only fills in profiles that are genuinely missing.
   //    Runs once per device but never overwrites existing cloud data.
-  const SEED_VERSION = 'v8-arabic-2026-05-01';
+  const SEED_VERSION = 'v9-empty-2026-05-02';
   const seeded = localStorage.getItem('seed_version');
   if (seeded !== SEED_VERSION) {
     await nukeAndSeed();
