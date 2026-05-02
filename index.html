@@ -1039,18 +1039,21 @@ function setSyncStatus(s) {
   const el = document.getElementById('sync-indicator');
   if (!el) return;
   const states = {
-    syncing: { dot: '#f59e0b', text: 'جارٍ المزامنة…', pulse: true  },
-    ok:      { dot: '#22c55e', text: 'تمت المزامنة ✓', pulse: false },
-    error:   { dot: '#ef4444', text: 'غير متصل',        pulse: false },
-    idle:    { dot: '#64748b', text: 'المزامنة السحابية',pulse: false }
+    syncing: { dot: '#f59e0b', text: 'جارٍ المزامنة…',      pulse: true  },
+    ok:      { dot: '#22c55e', text: 'تمت المزامنة ✓',       pulse: false },
+    live:    { dot: '#22c55e', text: '● مباشر — متصل',       pulse: true  },
+    error:   { dot: '#ef4444', text: 'غير متصل',             pulse: false },
+    idle:    { dot: '#64748b', text: 'المزامنة السحابية',     pulse: false }
   };
   const st = states[s] || states.idle;
   const pulseStyle = st.pulse ? 'animation:pulse-dot 1.2s ease infinite;' : '';
   el.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:' + st.dot + ';display:inline-block;margin-left:5px;' + pulseStyle + '"></span>' + st.text;
-  // Auto-revert 'ok' back to idle after 3 seconds
+  // Auto-revert 'ok' back to live (if WS connected) or idle after 3 seconds
   if (s === 'ok') {
     if (_syncOkTimer) clearTimeout(_syncOkTimer);
-    _syncOkTimer = setTimeout(function() { setSyncStatus('idle'); }, 3000);
+    _syncOkTimer = setTimeout(function() {
+      setSyncStatus(realtimeOk ? 'live' : 'idle');
+    }, 2000);
   }
 }
 
@@ -2087,6 +2090,7 @@ function getConsecutiveAbsentAlerts(cid) {
 // SET STATUS
 // ═══════════════════════════════════════════════════════════════════
 function setStatus(sid, status) {
+  touchUserAction();
   const prev = sessionData[sid];
   sessionData[sid] = status;
   if (status === 'present') {
@@ -2096,6 +2100,20 @@ function setStatus(sid, status) {
   }
   renderTab('attend');
 
+  // Push this single student's change to cloud immediately (live multi-device)
+  const cid = currentClassId;
+  const date = todayStr();
+  if (cid) {
+    if (!db[cid]) db[cid] = {};
+    if (!db[cid][date]) db[cid][date] = {};
+    db[cid][date][sid] = status;
+    if (!db[cid + '_times']) db[cid + '_times'] = {};
+    if (!db[cid + '_times'][date]) db[cid + '_times'][date] = {};
+    if (status === 'present') db[cid + '_times'][date][sid] = sessionTimes[sid];
+    saveData(db);
+    pushToCloud(cid, date, { ...db[cid][date] }, { ...(db[cid + '_times'][date] || {}) });
+  }
+
   // Brief haptic-style visual feedback on the tapped button
   requestAnimationFrame(function() {
     const rows = document.querySelectorAll('#student-list .student-row');
@@ -2104,7 +2122,7 @@ function setStatus(sid, status) {
         const btn = row.querySelector('.att-btn.' + (status === 'present' ? 'p' : status === 'absent' ? 'a' : 'l'));
         if (btn) {
           btn.classList.remove('pop');
-          void btn.offsetWidth; // force reflow
+          void btn.offsetWidth;
           btn.classList.add('pop');
           setTimeout(function(){ btn.classList.remove('pop'); }, 300);
         }
@@ -2458,25 +2476,70 @@ async function confirmDeleteSession(cid, date) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// REALTIME SYNC — Supabase WebSocket subscriptions + fallback poll
+// REALTIME SYNC — Live multi-device with instant screen refresh
 // ═══════════════════════════════════════════════════════════════════
 
-// Central refresh: called whenever any remote change arrives.
-// Updates data in the background — does NOT re-render the active screen
-// to avoid flicker/interruption while the user is working.
-// The next time the user navigates or the screen naturally refreshes,
-// the fresh data will be shown.
-function onRemoteChange() {
-  // Silently update in-memory db — no screen re-renders, no flicker for the user.
-  // Fresh data is shown when the user next navigates.
+// Track whether the user is actively tapping buttons (to avoid re-render mid-tap)
+let _lastUserAction = 0;
+function touchUserAction() { _lastUserAction = Date.now(); }
+
+// Smart live refresh — re-renders whichever screen is currently active
+// with fresh cloud data. Skips re-render if user tapped within 1.5s to
+// avoid interrupting active attendance marking.
+function onRemoteChange(source) {
   db = loadData();
+  const activeScreen = document.querySelector('.screen.active');
+  if (!activeScreen) return;
+  const id = activeScreen.id;
+  const msSinceAction = Date.now() - _lastUserAction;
+  const userIsActive = msSinceAction < 1500;
+
+  if (id === 'screen-home') {
+    renderHome();
+  } else if (id === 'screen-session-choice') {
+    if (currentClassId) renderSessionChoice(currentClassId);
+  } else if (id === 'screen-class') {
+    // Merge remote attendance into live sessionData without clobbering local unmarked entries
+    if (currentClassId) {
+      const remoteDay = (db[currentClassId] || {})[todayStr()] || {};
+      Object.keys(remoteDay).forEach(function(s) {
+        // Only update if: this device hasn't actively set this student yet
+        if (!userIsActive && (sessionData[s] === 'unmarked' || sessionData[s] === undefined)) {
+          sessionData[s] = remoteDay[s];
+        } else if (!userIsActive && remoteDay[s] !== sessionData[s] && remoteDay[s] !== 'unmarked') {
+          // Accept remote change for this student only if local is also saved state
+          sessionData[s] = remoteDay[s];
+        }
+      });
+    }
+    renderClassScreen();
+  } else if (id === 'screen-history') {
+    openGlobalHistory();
+  } else if (id === 'screen-profile') {
+    if (profileCurrentCid && profileCurrentName) {
+      renderProfileContent(profileCurrentCid, profileCurrentName);
+    }
+  }
+  // screen-hist-detail: refreshes on next open, not worth interrupting a static view
 }
+
 // ── Supabase Realtime via WebSocket (Phoenix protocol) ──────────────
 let realtimeSocket   = null;
 let realtimeOk       = false;
 let fallbackInterval = null;
+let _remoteChangeTimer = null;
+
+// Debounce rapid remote events (e.g. another device saving quickly)
+function scheduleRemoteRefresh(source) {
+  if (_remoteChangeTimer) clearTimeout(_remoteChangeTimer);
+  _remoteChangeTimer = setTimeout(function() { onRemoteChange(source); }, 300);
+}
 
 function startRealtime() {
+  // Don't open a second socket if one is already connecting/open
+  if (realtimeSocket && (realtimeSocket.readyState === WebSocket.OPEN ||
+      realtimeSocket.readyState === WebSocket.CONNECTING)) return;
+
   const wsUrl = SUPABASE_URL.replace('https://', 'wss://') +
                 '/realtime/v1/websocket?apikey=' + SUPABASE_ANON + '&vsn=1.0.0';
 
@@ -2513,51 +2576,40 @@ function startRealtime() {
 
   realtimeSocket.onopen = function() {
     realtimeOk = true;
-
-    // Subscribe to all three tables
+    setSyncStatus('ok');
     subscribeTable('realtime:public:attendance');
     subscribeTable('realtime:public:extra_students');
     subscribeTable('realtime:public:student_profiles');
-
-    // Heartbeat every 25s to keep connection alive
     heartbeatTimer = setInterval(function() {
       send({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(joinRef++) });
     }, 25000);
-
-    // Stop fallback poll if it was running
     if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
   };
 
   realtimeSocket.onmessage = async function(evt) {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
-
-    // Ignore heartbeat acks and join confirmations
     if (msg.event === 'phx_reply' || msg.event === 'phx_close') return;
 
-    // A postgres_changes event arrived — pull fresh data then refresh UI
-    if (msg.event === 'postgres_changes' ||
-        (msg.payload && msg.payload.type && ['INSERT','UPDATE','DELETE'].includes(msg.payload.type))) {
+    const isChange = msg.event === 'postgres_changes' ||
+      (msg.payload && msg.payload.type && ['INSERT','UPDATE','DELETE'].includes(msg.payload.type));
+    if (!isChange) return;
 
-      const table = (msg.payload && msg.payload.table) || '';
+    const table = (msg.payload && msg.payload.table) || '';
+    setSyncStatus('syncing');
+    try {
+      if (table === 'attendance' || table === 'extra_students') {
+        await pullFromCloud();
+      } else if (table === 'student_profiles') {
+        await pullProfilesFromCloud();
+      } else {
+        await pullFromCloud();
+        await pullProfilesFromCloud();
+      }
+      setSyncStatus('ok');
+    } catch(e) { setSyncStatus('error'); }
 
-      setSyncStatus('syncing');
-      try {
-        if (table === 'attendance') {
-          await pullFromCloud();
-        } else if (table === 'student_profiles') {
-          await pullProfilesFromCloud();
-        } else if (table === 'extra_students') {
-          await pullFromCloud();
-        } else {
-          await pullFromCloud();
-          await pullProfilesFromCloud();
-        }
-        setSyncStatus('ok');
-      } catch(e) { setSyncStatus('error'); }
-
-      onRemoteChange();
-    }
+    scheduleRemoteRefresh(table || 'ws');
   };
 
   realtimeSocket.onerror = function() {
@@ -2568,75 +2620,65 @@ function startRealtime() {
   realtimeSocket.onclose = function() {
     realtimeOk = false;
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-    // Auto-reconnect after 4 seconds
     setTimeout(function() {
-      if (document.visibilityState === 'visible') startRealtime();
-    }, 4000);
+      if (document.visibilityState !== 'hidden') startRealtime();
+    }, 3000);
     startFallbackPoll();
   };
 }
 
-// ── Fallback poll: runs every 4s when WebSocket is down or reconnecting ──
-// Also runs a slower background poll (every 8s) even when WebSocket is up,
-// as a safety net to catch any missed events.
+// ── Fallback poll: 2s interval when WebSocket is down ──────────────
 let bgPollInterval = null;
 
 function startFallbackPoll() {
-  if (fallbackInterval) return; // already running
+  if (fallbackInterval) return;
   fallbackInterval = setInterval(async function() {
-    if (!document.visibilityState || document.visibilityState === 'visible') {
-      if (realtimeOk) {
-        // WebSocket is back — stop the fallback poll
-        clearInterval(fallbackInterval); fallbackInterval = null;
-        return;
-      }
-      setSyncStatus('syncing');
-      try {
-        await pullFromCloud();
-        await pullProfilesFromCloud();
-        setSyncStatus('ok');
-      } catch(e) { setSyncStatus('error'); }
-      onRemoteChange();
-    }
-  }, 4000);
+    if (document.visibilityState === 'hidden') return;
+    if (realtimeOk) { clearInterval(fallbackInterval); fallbackInterval = null; return; }
+    setSyncStatus('syncing');
+    try {
+      await pullFromCloud();
+      await pullProfilesFromCloud();
+      setSyncStatus('ok');
+    } catch(e) { setSyncStatus('error'); }
+    scheduleRemoteRefresh('poll');
+  }, 2000);
 }
 
 function startBgPoll() {
   if (bgPollInterval) return;
-  // Background safety-net poll: catches any WebSocket-missed events
+  // Safety-net: even with WS up, poll every 5s to catch any missed events
   bgPollInterval = setInterval(async function() {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState === 'hidden') return;
     try {
+      const prevHash = JSON.stringify(db);
       await pullFromCloud();
       await pullProfilesFromCloud();
-      onRemoteChange();
+      const newHash = JSON.stringify(loadData());
+      if (newHash !== prevHash) scheduleRemoteRefresh('bgpoll');
     } catch(e) { /* silent */ }
-  }, 8000);
+  }, 5000);
 }
 
-// ── Reconnect when tab becomes visible again ────────────────────────
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') {
-    // Reconnect WebSocket if it dropped while tab was hidden
     if (!realtimeSocket || realtimeSocket.readyState === WebSocket.CLOSED ||
         realtimeSocket.readyState === WebSocket.CLOSING) {
       startRealtime();
     }
-    // Immediate pull on focus to show any changes that happened while away
     setSyncStatus('syncing');
     pullFromCloud().then(function() {
       return pullProfilesFromCloud();
     }).then(function() {
       setSyncStatus('ok');
-      onRemoteChange();
+      scheduleRemoteRefresh('focus');
     }).catch(function() { setSyncStatus('error'); });
   }
 });
 
-// Kept for backward compatibility — init() calls this
 function startSyncPoll() {
   startRealtime();
-  startBgPoll(); // always run background safety-net poll
+  startBgPoll();
 }
 
 // ═══════════════════════════════════════════════════════════════════
