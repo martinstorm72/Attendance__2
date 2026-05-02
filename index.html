@@ -2291,9 +2291,9 @@ function confirmDeleteSession(cid, date) {
     '<button class="modal-btn primary" id="del-session-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الجلسة</button>' +
     '<button class="modal-btn secondary" id="del-session-cancel">إلغاء</button>'
   );
-  document.getElementById('del-session-confirm').addEventListener('click', function() {
-    deleteSession(cid, date);
+  document.getElementById('del-session-confirm').addEventListener('click', async function() {
     closeModal();
+    await deleteSession(cid, date);
   });
   document.getElementById('del-session-cancel').addEventListener('click', closeModal);
 }
@@ -2314,12 +2314,19 @@ async function deleteSession(cid, date) {
       headers: { 'Prefer': 'return=minimal' }
     });
   } catch(e) { console.warn('Cloud session delete failed:', e); }
-  // Refresh UI
+  // Refresh UI — be safe about which screen is active
   const active = document.querySelector('.screen.active');
-  if (active && active.id === 'screen-class') {
+  const aid = active ? active.id : '';
+  if (aid === 'screen-class' && currentClassId === cid) {
     renderTab(currentTab);
     renderStats();
-  } else if (active && active.id === 'screen-session-choice') {
+  } else if (aid === 'screen-session-choice') {
+    renderSessionChoice(cid);
+  } else if (aid === 'screen-history') {
+    openGlobalHistory();
+  } else {
+    // Fallback: re-open the session choice for this class
+    currentClassId = cid;
     renderSessionChoice(cid);
   }
   renderHome();
@@ -2339,10 +2346,9 @@ function confirmDeleteProfile() {
     '<button class="modal-btn primary" id="del-prof-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
     '<button class="modal-btn secondary" id="del-prof-cancel">إلغاء</button>'
   );
-  document.getElementById('del-prof-confirm').addEventListener('click', function() {
-    deleteProfileData(cid, name);
+  document.getElementById('del-prof-confirm').addEventListener('click', async function() {
     closeModal();
-    // Go back after deleting
+    await deleteProfileData(cid, name);
     showScreen('screen-class');
   });
   document.getElementById('del-prof-cancel').addEventListener('click', closeModal);
@@ -2357,9 +2363,9 @@ function confirmDeleteProfile2(cid, name) {
     '<button class="modal-btn primary" id="del-prof2-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
     '<button class="modal-btn secondary" id="del-prof2-cancel">إلغاء</button>'
   );
-  document.getElementById('del-prof2-confirm').addEventListener('click', function() {
-    deleteProfileData(cid, name);
+  document.getElementById('del-prof2-confirm').addEventListener('click', async function() {
     closeModal();
+    await deleteProfileData(cid, name);
     renderHomeProfiles();
   });
   document.getElementById('del-prof2-cancel').addEventListener('click', closeModal);
@@ -2379,6 +2385,11 @@ async function deleteProfileData(cid, name) {
       headers: { 'Prefer': 'return=minimal' }
     });
   } catch(e) { console.warn('Cloud profile delete failed:', e); }
+  // Refresh home profiles list if it's visible
+  if (profilesSectionUnlocked) {
+    const profilesDiv = document.getElementById('home-profiles');
+    if (profilesDiv && profilesDiv.style.display !== 'none') renderHomeProfiles();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2393,9 +2404,9 @@ function confirmDeleteStudent(cid, name) {
     '<button class="modal-btn primary" id="del-stu-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف</button>' +
     '<button class="modal-btn secondary" id="del-stu-cancel">إلغاء</button>'
   );
-  document.getElementById('del-stu-confirm').addEventListener('click', function() {
-    doDeleteStudent(cid, name);
+  document.getElementById('del-stu-confirm').addEventListener('click', async function() {
     closeModal();
+    await doDeleteStudent(cid, name);
   });
   document.getElementById('del-stu-cancel').addEventListener('click', closeModal);
 }
@@ -2425,9 +2436,11 @@ async function doDeleteStudent(cid, name) {
       headers: { 'Prefer': 'return=minimal' }
     });
   } catch(e) { console.warn('Cloud student delete failed:', e); }
-  // Refresh UI
-  renderTab(currentTab);
-  renderStats();
+  // Refresh UI — make sure we update the right screen
+  if (currentClassId === cid) {
+    renderTab(currentTab);
+    renderStats();
+  }
   renderHome();
 }
 
