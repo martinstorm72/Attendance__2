@@ -1176,12 +1176,19 @@ async function pushProfileToCloud(studentKey, profileData) {
 
 async function pullProfilesFromCloud() {
   try {
-    const rows = await sbFetch('student_profiles?select=*');
+    const rows = await sbFetch('student_profiles?select=*&order=updated_at.desc', {
+      headers: { 'Range': '0-9999' }
+    });
     if (!rows || !rows.length) return;
     const local = loadProfiles();
-    rows.forEach(row => { local[row.student_key] = row.profile; });
+    // Cloud always wins — it has the latest saved data
+    rows.forEach(row => {
+      if (row.student_key && row.profile) {
+        local[row.student_key] = row.profile;
+      }
+    });
     saveProfiles(local);
-  } catch(e) { /* table may not exist yet */ }
+  } catch(e) { console.warn('pullProfilesFromCloud failed:', e); }
 }
 
 function getProfileKey(cid, name) { return cid + '::' + name; }
@@ -1189,11 +1196,11 @@ function getProfile(cid, name) {
   const profiles = loadProfiles();
   return profiles[getProfileKey(cid, name)] || {};
 }
-function setProfile(cid, name, data) {
+async function setProfile(cid, name, data) {
   const profiles = loadProfiles();
   profiles[getProfileKey(cid, name)] = data;
   saveProfiles(profiles);
-  pushProfileToCloud(getProfileKey(cid, name), data);
+  await pushProfileToCloud(getProfileKey(cid, name), data);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3386,7 +3393,9 @@ async function saveProfileScreen() {
   };
 
   // 1. Save locally first (instant)
-  setProfile(cid, name, updated);
+  const profiles = loadProfiles();
+  profiles[getProfileKey(cid, name)] = updated;
+  saveProfiles(profiles);
 
   // 2. Visual feedback — saving
   const btn    = document.getElementById('profile-save-btn');
@@ -3394,7 +3403,7 @@ async function saveProfileScreen() {
   if (btn) { btn.textContent = '⏳ جارٍ الحفظ…'; btn.disabled = true; }
   if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = '☁️ جارٍ المزامنة مع السحابة…'; }
 
-  // 3. Push to cloud
+  // 3. Push to cloud (single push)
   try {
     await pushProfileToCloud(getProfileKey(cid, name), updated);
     if (btn) {
