@@ -2261,8 +2261,12 @@
           const extra = loadExtraStudents();
           if (studentRows && studentRows.length) {
             const deleted = loadDeletedStudents();
+            // Deduplicate by class_id+name in case old duplicate rows exist in DB
+            const seen = new Set();
             studentRows.forEach(row => {
               const key = row.class_id + '::' + row.name;
+              if (seen.has(key)) return;
+              seen.add(key);
               if (deleted.includes(key)) return;
               if (!extra[row.class_id]) extra[row.class_id] = [];
               if (!extra[row.class_id].includes(row.name)) extra[row.class_id].push(row.name);
@@ -2315,7 +2319,7 @@
     // ═══════════════════════════════════════════════════════════════════
     async function pushExtraStudent(cid, name) {
       try {
-        await sbFetch('extra_students', {
+        await sbFetch('extra_students?on_conflict=class_id,name', {
           method: 'POST',
           prefer: 'resolution=merge-duplicates,return=minimal',
           headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -3913,7 +3917,7 @@
           startRealtime();
         }
         setSyncStatus('syncing');
-        pullAll().then(function () { setSyncStatus('ok'); }).catch(function () { setSyncStatus('error'); });
+        pullAll().then(function () { setSyncStatus('ok'); onRemoteChange(); }).catch(function () { setSyncStatus('error'); });
       }
     });
 
@@ -4516,14 +4520,22 @@
       renderHome();
       setSyncStatus('syncing');
 
-      // 2. Pull everything from cloud, then re-render
-      try {
-        await pullAll();
-        setSyncStatus('ok');
-      } catch (e) {
-        console.warn('Init pull failed (offline?):', e);
-        setSyncStatus('error');
+      // 2. Pull everything from cloud with retry logic (critical for mobile)
+      let pulled = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await pullAll();
+          setSyncStatus('ok');
+          pulled = true;
+          break;
+        } catch (e) {
+          console.warn('Init pull attempt ' + (attempt + 1) + ' failed:', e);
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+          }
+        }
       }
+      if (!pulled) setSyncStatus('error');
 
       // 3. Start live sync — WebSocket + background safety-net poll
       startSyncPoll();
