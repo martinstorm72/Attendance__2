@@ -914,22 +914,12 @@ const CLASSES = [
   {
     id: 'c1', name: 'أولى ابتدائي', sub: 'الصف الأول',
     icon: '١', color: '#4f8ef7', bg: 'rgba(79,142,247,0.15)',
-    students: [
-      'مريم جورج', 'بيشوي ميلاد', 'مارينا سمير', 'كيرلس فادي',
-      'ماريان رامي', 'فيلوباتير يوسف', 'إيريني نبيل', 'مينا إسحاق',
-      'كريستين عاطف', 'أبانوب ماهر', 'ريجينا أنطوان', 'جرجس أيمن',
-      'سالي سعد', 'بولا نصر', 'مارك نادر'
-    ]
+    students: []
   },
   {
     id: 'c2', name: 'تانية ابتدائي', sub: 'الصف الثاني',
     icon: '٢', color: '#22c55e', bg: 'rgba(34,197,94,0.15)',
-    students: [
-      'ماريا ميخائيل', 'بيتر عزيز', 'ندى وليم', 'إبراهيم جميل',
-      'ستيفاني رفعت', 'يوسف سعيد', 'أميلي منصور', 'مارتينا طارق',
-      'ميناس هاني', 'فيكتوريا عصام', 'إريك مجدي', 'جولي صبري',
-      'مارك سامي', 'نانسي راعي', 'بيشوي رفيق'
-    ]
+    students: []
   },
   {
     id: 'c3', name: 'تالتة ابتدائي', sub: 'الصف الثالث',
@@ -3432,6 +3422,46 @@ async function saveProfileScreen() {
   }, 3000);
 }
 // ═══════════════════════════════════════════════════════════════════
+// WIPE ALL DATA — runs once on clean-start version bump
+// Clears localStorage AND all Supabase tables so nothing from the
+// old demo data can come back via cloud sync.
+// ═══════════════════════════════════════════════════════════════════
+async function wipeAllData() {
+  console.log('🧹 Wiping all data for clean start…');
+
+  // 1. Clear localStorage completely
+  localStorage.removeItem('att_data');
+  localStorage.removeItem('extra_students');
+  localStorage.removeItem('deleted_students');
+  localStorage.removeItem('student_profiles');
+  db = {};
+
+  // 2. Wipe Supabase tables (delete all rows)
+  try {
+    await sbFetch('attendance?id=gt.0', {
+      method: 'DELETE', headers: { 'Prefer': 'return=minimal' }
+    });
+    console.log('✅ attendance wiped');
+  } catch(e) { console.warn('attendance wipe failed:', e); }
+
+  try {
+    await sbFetch('extra_students?id=gt.0', {
+      method: 'DELETE', headers: { 'Prefer': 'return=minimal' }
+    });
+    console.log('✅ extra_students wiped');
+  } catch(e) { console.warn('extra_students wipe failed:', e); }
+
+  try {
+    await sbFetch('student_profiles?id=gt.0', {
+      method: 'DELETE', headers: { 'Prefer': 'return=minimal' }
+    });
+    console.log('✅ student_profiles wiped');
+  } catch(e) { console.warn('student_profiles wipe failed:', e); }
+
+  console.log('✅ Clean start complete');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 async function init() {
   // 1. Show local data immediately so the UI is responsive right away
   renderHome();
@@ -3448,12 +3478,11 @@ async function init() {
     setSyncStatus('error');
   }
 
-  // 3. Safe seed — only fills in profiles that are genuinely missing.
-  //    Never deletes anything.
-  const SEED_VERSION = 'v8-arabic-2026-05-01';
+  // 3. Clean start — wipe all cloud + local data on first run of this version
+  const SEED_VERSION = 'v9-clean-start-2026-05-02';
   const seeded = localStorage.getItem('seed_version');
   if (seeded !== SEED_VERSION) {
-    await nukeAndSeed(); // now safe — only fills gaps, never wipes
+    await wipeAllData();
     localStorage.setItem('seed_version', SEED_VERSION);
   }
 
