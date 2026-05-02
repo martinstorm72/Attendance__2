@@ -3536,7 +3536,20 @@
         if (confirmBtn) confirmBtn.addEventListener('click', async function () {
           closeModal();
           await deleteProfileData(cid, name);
-          showScreen('screen-class');
+          // Go back — if we came from a class screen, go there, else go home
+          if (currentClassId) {
+            showScreen('screen-class');
+            renderTab(currentTab);
+            renderStats();
+          } else {
+            showScreen('screen-home');
+          }
+          // Show brief success toast
+          var toast = document.createElement('div');
+          toast.textContent = '✅ تم حذف ' + name + ' بنجاح';
+          toast.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:12px 24px;border-radius:24px;font-size:14px;font-weight:700;z-index:99999;font-family:Cairo,Tajawal,sans-serif;white-space:nowrap;box-shadow:0 4px 20px rgba(0,0,0,0.3)';
+          document.body.appendChild(toast);
+          setTimeout(function() { toast.remove(); }, 2500);
         });
         if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
       }, 0);
@@ -3565,19 +3578,51 @@
 
     async function deleteProfileData(cid, name) {
       const key = getProfileKey(cid, name);
-      // Remove locally
+
+      // 1. Remove profile data locally
       const profiles = loadProfiles();
       delete profiles[key];
       saveProfiles(profiles);
-      // Remove from cloud
+
+      // 2. Remove student from extra_students locally
+      const extra = loadExtraStudents();
+      if (extra[cid]) {
+        extra[cid] = extra[cid].filter(function(n) { return n !== name; });
+        saveExtraStudents(extra);
+      }
+
+      // 3. Record in deleted_students locally so it stays gone after sync
+      const deleted = loadDeletedStudents();
+      if (!deleted.includes(key)) { deleted.push(key); saveDeletedStudents(deleted); }
+
+      // 4. Remove from in-memory CLASSES so UI updates immediately
+      const cls = CLASSES.find(function(c) { return c.id === cid; });
+      if (cls) {
+        const idx = cls.students.indexOf(name);
+        if (idx !== -1) cls.students.splice(idx, 1);
+      }
+
+      // 5. Push all deletions to cloud
       try {
-        await sbFetch('student_profiles?student_key=eq.' + encodeURIComponent(key), {
-          method: 'DELETE',
-          prefer: 'return=minimal',
-          headers: { 'Prefer': 'return=minimal' }
-        });
-      } catch (e) { console.warn('Cloud profile delete failed:', e); }
-      // Refresh home profiles list if it's visible
+        await Promise.all([
+          sbFetch('student_profiles?student_key=eq.' + encodeURIComponent(key), {
+            method: 'DELETE',
+            headers: { 'Prefer': 'return=minimal' }
+          }),
+          sbFetch('extra_students?class_id=eq.' + encodeURIComponent(cid) + '&name=eq.' + encodeURIComponent(name), {
+            method: 'DELETE',
+            headers: { 'Prefer': 'return=minimal' }
+          }),
+          sbFetch('deleted_students?on_conflict=student_key', {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+            body: JSON.stringify({ student_key: key, class_id: cid, name: name })
+          })
+        ]);
+      } catch (e) { console.warn('Cloud delete failed:', e); }
+
+      // 6. Refresh all visible UI
+      renderHome();
       if (profilesSectionUnlocked) {
         const profilesDiv = document.getElementById('home-profiles');
         if (profilesDiv && profilesDiv.style.display !== 'none') renderHomeProfiles();
