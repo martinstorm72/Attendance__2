@@ -1076,19 +1076,13 @@ async function pullFromCloud() {
       if (row.times) cloudDb[cid + '_times'][date] = row.times;
     });
 
-    // Deep merge: start with local data, then overlay cloud data per-class per-date.
-    // Cloud wins on any date both have; local-only dates/keys are preserved.
+    // Cloud is the source of truth — always overwrite local with cloud data.
+    // This ensures every device sees the same data regardless of local state.
     const local = loadData();
     db = { ...local };
     CLASSES.forEach(cls => {
-      // Merge attendance dates
-      if (cloudDb[cls.id]) {
-        db[cls.id] = Object.assign({}, local[cls.id] || {}, cloudDb[cls.id]);
-      }
-      // Merge times
-      if (cloudDb[cls.id + '_times']) {
-        db[cls.id + '_times'] = Object.assign({}, (local[cls.id + '_times'] || {}), cloudDb[cls.id + '_times']);
-      }
+      if (cloudDb[cls.id])            db[cls.id]            = cloudDb[cls.id];
+      if (cloudDb[cls.id + '_times']) db[cls.id + '_times'] = cloudDb[cls.id + '_times'];
     });
     saveData(db);
 
@@ -1110,10 +1104,10 @@ async function pullFromCloud() {
         });
         saveExtraStudents(extra);
       }
-    } catch(e) { /* table may not exist yet */ }
+    } catch(e) { console.warn('extra_students pull failed:', e); }
 
   } catch(e) {
-    console.warn('Pull failed:', e);
+    console.warn('pullFromCloud failed:', e);
   }
 }
 
@@ -2163,6 +2157,7 @@ async function saveAttendance() {
     startViewSessions(cid);
   });
   renderStats();
+  renderHome(); // Update home screen badges immediately
 
   // Push to cloud
   try {
@@ -2170,6 +2165,7 @@ async function saveAttendance() {
     const el = document.getElementById('cloud-save-status');
     if (el) el.innerHTML = '☁️ <span style="color:var(--green)">تمت المزامنة ✓</span>';
   } catch(e) {
+    console.warn('saveAttendance push failed:', e);
     const el = document.getElementById('cloud-save-status');
     if (el) el.innerHTML = '⚠️ <span style="color:var(--amber)">محفوظ محلياً فقط (بدون اتصال)</span>';
   }
@@ -2541,10 +2537,10 @@ function confirmAddPerson() {
     sessionData[name] = 'unmarked';
   }
 
-  // Push to cloud
-  pushExtraStudent(cid, name);
-
   closeModal();
+
+  // Push to cloud (fire and forget is ok here — student is already saved locally)
+  pushExtraStudent(cid, name).catch(e => console.warn('Extra student push:', e));
   showModal(
     '<div class="modal-icon">✅</div>' +
     '<div class="modal-title">Student Added</div>' +
@@ -2713,7 +2709,11 @@ function startRealtime() {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
 
-    // Ignore heartbeat acks and join confirmations
+    // Track successful channel join
+    if (msg.event === 'phx_reply' && msg.payload && msg.payload.status === 'ok') {
+      realtimeOk = true;
+      if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
+    }
     if (msg.event === 'phx_reply' || msg.event === 'phx_close') return;
 
     // A postgres_changes event arrived — pull fresh data then refresh UI
@@ -2724,19 +2724,14 @@ function startRealtime() {
 
       setSyncStatus('syncing');
       try {
-        if (table === 'attendance') {
-          await pullFromCloud();
-        } else if (table === 'student_profiles') {
-          await pullProfilesFromCloud();
-        } else if (table === 'extra_students') {
-          await pullFromCloud();
-        } else {
-          await pullFromCloud();
-          await pullProfilesFromCloud();
-        }
+        // Always pull both — guarantees full consistency across all tables
+        await pullFromCloud();
+        await pullProfilesFromCloud();
         setSyncStatus('ok');
-      } catch(e) { setSyncStatus('error'); }
-
+      } catch(e) {
+        console.warn('Realtime pull failed:', e);
+        setSyncStatus('error');
+      }
       onRemoteChange();
     }
   };
@@ -2776,23 +2771,26 @@ function startFallbackPoll() {
         await pullFromCloud();
         await pullProfilesFromCloud();
         setSyncStatus('ok');
-      } catch(e) { setSyncStatus('error'); }
-      onRemoteChange();
+        onRemoteChange();
+      } catch(e) {
+        console.warn('Fallback poll failed:', e);
+        setSyncStatus('error');
+      }
     }
   }, 30000);
 }
 
 function startBgPoll() {
   if (bgPollInterval) return;
-  // Background safety-net poll: catches any WebSocket-missed events
+  // Background safety-net poll: catches any WebSocket-missed events every 30s
   bgPollInterval = setInterval(async function() {
     if (document.visibilityState !== 'visible') return;
     try {
       await pullFromCloud();
       await pullProfilesFromCloud();
       onRemoteChange();
-    } catch(e) { /* silent */ }
-  }, 60000);
+    } catch(e) { console.warn('BgPoll failed:', e); }
+  }, 30000);
 }
 
 // ── Reconnect when tab becomes visible again ────────────────────────
@@ -2805,12 +2803,10 @@ document.addEventListener('visibilitychange', function() {
     }
     // Immediate pull on focus to show any changes that happened while away
     setSyncStatus('syncing');
-    pullFromCloud().then(function() {
-      return pullProfilesFromCloud();
-    }).then(function() {
-      setSyncStatus('ok');
-      onRemoteChange();
-    }).catch(function() { setSyncStatus('error'); });
+    pullFromCloud()
+      .then(() => pullProfilesFromCloud())
+      .then(() => { setSyncStatus('ok'); onRemoteChange(); })
+      .catch(e => { console.warn('Visibility pull failed:', e); setSyncStatus('error'); });
   }
 });
 
