@@ -3521,12 +3521,16 @@
         '<button class="modal-btn primary" id="del-prof-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
         '<button class="modal-btn secondary" id="del-prof-cancel">إلغاء</button>'
       );
-      document.getElementById('del-prof-confirm').addEventListener('click', async function () {
-        closeModal();
-        await deleteProfileData(cid, name);
-        showScreen('screen-class');
-      });
-      document.getElementById('del-prof-cancel').addEventListener('click', closeModal);
+      setTimeout(function () {
+        var confirmBtn = document.getElementById('del-prof-confirm');
+        var cancelBtn = document.getElementById('del-prof-cancel');
+        if (confirmBtn) confirmBtn.addEventListener('click', async function () {
+          closeModal();
+          await deleteProfileData(cid, name);
+          showScreen('screen-class');
+        });
+        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+      }, 0);
     }
 
     // Called from home profiles list
@@ -3538,12 +3542,16 @@
         '<button class="modal-btn primary" id="del-prof2-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف الملف</button>' +
         '<button class="modal-btn secondary" id="del-prof2-cancel">إلغاء</button>'
       );
-      document.getElementById('del-prof2-confirm').addEventListener('click', async function () {
-        closeModal();
-        await deleteProfileData(cid, name);
-        renderHomeProfiles();
-      });
-      document.getElementById('del-prof2-cancel').addEventListener('click', closeModal);
+      setTimeout(function () {
+        var confirmBtn = document.getElementById('del-prof2-confirm');
+        var cancelBtn = document.getElementById('del-prof2-cancel');
+        if (confirmBtn) confirmBtn.addEventListener('click', async function () {
+          closeModal();
+          await deleteProfileData(cid, name);
+          renderHomeProfiles();
+        });
+        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+      }, 0);
     }
 
     async function deleteProfileData(cid, name) {
@@ -3579,11 +3587,15 @@
         '<button class="modal-btn primary" id="del-stu-confirm" style="background:linear-gradient(135deg,var(--red),#b91c1c);margin-bottom:8px">نعم، احذف</button>' +
         '<button class="modal-btn secondary" id="del-stu-cancel">إلغاء</button>'
       );
-      document.getElementById('del-stu-confirm').addEventListener('click', async function () {
-        closeModal();
-        await doDeleteStudent(cid, name);
-      });
-      document.getElementById('del-stu-cancel').addEventListener('click', closeModal);
+      setTimeout(function () {
+        var confirmBtn = document.getElementById('del-stu-confirm');
+        var cancelBtn = document.getElementById('del-stu-cancel');
+        if (confirmBtn) confirmBtn.addEventListener('click', async function () {
+          closeModal();
+          await doDeleteStudent(cid, name);
+        });
+        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+      }, 0);
     }
 
     async function doDeleteStudent(cid, name) {
@@ -3793,6 +3805,7 @@
     let fallbackInterval = null;
     let bgPollInterval = null;
     let _joinRef = 1;
+    let _reconnectTimer = null;
 
     function startRealtime() {
       // Don't open a second socket if one is already open
@@ -3800,6 +3813,7 @@
         (realtimeSocket.readyState === WebSocket.OPEN ||
           realtimeSocket.readyState === WebSocket.CONNECTING)) return;
 
+      // Supabase Realtime v2 requires vsn=1.0.0 on the WS URL
       const wsUrl = SUPABASE_URL.replace('https://', 'wss://') +
         '/realtime/v1/websocket?apikey=' + SUPABASE_ANON + '&vsn=1.0.0';
 
@@ -3813,18 +3827,27 @@
           realtimeSocket.send(JSON.stringify(obj));
       }
 
-      // Subscribe to a table using Supabase Realtime v2 channel format
-      function subscribeTable(tableName) {
+      // ── Correct Supabase Realtime v2 channel subscription ──────────────
+      // One channel called "db-changes" that listens to ALL four tables.
+      // topic must be "realtime:<channel_name>" where channel_name is arbitrary.
+      // postgres_changes is an ARRAY — one filter object per table.
+      function subscribeAll() {
         const ref = String(_joinRef++);
         sendMsg({
-          topic: 'realtime:' + tableName,
+          topic: 'realtime:db-changes',
           event: 'phx_join',
           payload: {
             config: {
               broadcast: { self: false },
               presence: { key: '' },
-              postgres_changes: [{ event: '*', schema: 'public', table: tableName }]
-            }
+              postgres_changes: [
+                { event: '*', schema: 'public', table: 'attendance' },
+                { event: '*', schema: 'public', table: 'extra_students' },
+                { event: '*', schema: 'public', table: 'student_profiles' },
+                { event: '*', schema: 'public', table: 'deleted_students' }
+              ]
+            },
+            access_token: SUPABASE_ANON
           },
           ref: ref
         });
@@ -3834,15 +3857,12 @@
         realtimeOk = true;
         console.log('✅ Realtime WebSocket connected');
 
-        subscribeTable('attendance');
-        subscribeTable('extra_students');
-        subscribeTable('student_profiles');
-        subscribeTable('deleted_students');
+        subscribeAll();
 
-        // Keep-alive heartbeat every 20s
+        // Keep-alive heartbeat every 25s (Supabase drops idle sockets at 30s)
         heartbeatTimer = setInterval(function () {
           sendMsg({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(_joinRef++) });
-        }, 20000);
+        }, 25000);
 
         // Stop fallback poll — WebSocket is working
         if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
@@ -3852,16 +3872,25 @@
         let msg;
         try { msg = JSON.parse(evt.data); } catch { return; }
 
-        // Skip heartbeat acks and join confirmations
-        if (msg.event === 'phx_reply' || msg.event === 'phx_close') return;
+        // Log all messages in dev for debugging
+        if (msg.event !== 'phx_reply' && msg.event !== 'heartbeat') {
+          console.log('📨 WS msg:', msg.event, msg.payload);
+        }
 
-        // postgres_changes event — data changed on another device
-        const isChange = msg.event === 'postgres_changes' ||
-          (msg.payload && msg.payload.data && msg.payload.data.type &&
-            ['INSERT', 'UPDATE', 'DELETE'].includes(msg.payload.data.type));
+        // Skip heartbeat acks
+        if (msg.event === 'phx_reply' && msg.ref) return;
+        if (msg.event === 'phx_close') return;
+
+        // Supabase v2 fires event "postgres_changes" with payload.data containing the change
+        const isChange =
+          msg.event === 'postgres_changes' ||
+          msg.event === 'INSERT' || msg.event === 'UPDATE' || msg.event === 'DELETE' ||
+          (msg.payload && msg.payload.data &&
+            ['INSERT', 'UPDATE', 'DELETE'].includes((msg.payload.data || {}).type)) ||
+          (msg.payload && ['INSERT', 'UPDATE', 'DELETE'].includes(msg.payload.type));
 
         if (isChange) {
-          console.log('🔄 Remote change detected, pulling…', msg.payload);
+          console.log('🔄 Remote change detected, pulling…');
           setSyncStatus('syncing');
           try {
             await pullAll();
@@ -3881,31 +3910,32 @@
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
         console.warn('WebSocket closed, reconnecting in 3s…');
         startFallbackPoll();
-        // Auto-reconnect after 3s
-        setTimeout(function () { startRealtime(); }, 3000);
+        // Auto-reconnect after 3s (clear any existing timer first)
+        if (_reconnectTimer) clearTimeout(_reconnectTimer);
+        _reconnectTimer = setTimeout(function () { _reconnectTimer = null; startRealtime(); }, 3000);
       };
     }
 
-    // ── Fallback poll: every 5s when WebSocket is down ─────────────────
+    // ── Fallback poll: every 3s when WebSocket is down ─────────────────
     function startFallbackPoll() {
       if (fallbackInterval) return;
-      console.log('📡 Starting fallback poll (5s)');
+      console.log('📡 Starting fallback poll (3s)');
       fallbackInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
         if (realtimeOk) { clearInterval(fallbackInterval); fallbackInterval = null; return; }
         setSyncStatus('syncing');
         try { await pullAll(); setSyncStatus('ok'); }
         catch (e) { setSyncStatus('error'); }
-      }, 5000);
+      }, 3000);
     }
 
-    // ── Background safety-net poll: every 30s even when WebSocket is up ─
+    // ── Background safety-net poll: every 10s even when WebSocket is up ─
     function startBgPoll() {
       if (bgPollInterval) return;
       bgPollInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
         try { await pullAll(); } catch (e) { /* silent */ }
-      }, 30000);
+      }, 10000);
     }
 
     // ── Sync immediately when tab becomes visible ───────────────────────
