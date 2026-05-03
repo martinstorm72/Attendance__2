@@ -2129,25 +2129,24 @@
     ];
 
     // ═══════════════════════════════════════════════════════════════════
-    // LOCAL STORAGE FALLBACK
+    // IN-MEMORY STORE — Supabase is the single source of truth.
+    // No localStorage is used for app data.
     // ═══════════════════════════════════════════════════════════════════
-    function loadData() {
-      try { return JSON.parse(localStorage.getItem('att_data') || '{}'); } catch { return {}; }
-    }
-    function saveData(d) { localStorage.setItem('att_data', JSON.stringify(d)); }
+    var _memDb = {};          // attendance + _times data
+    var _memExtra = {};       // { cid: [name, ...] }
+    var _memDeleted = [];     // ["cid::name", ...]
+    var _memProfiles = {};    // { "cid::name": profileObj }
 
-    // ── Extra / deleted students persisted locally ──────────────────────
-    function loadExtraStudents() {
-      try { return JSON.parse(localStorage.getItem('extra_students') || '{}'); } catch { return {}; }
-    }
-    function saveExtraStudents(obj) { localStorage.setItem('extra_students', JSON.stringify(obj)); }
+    function loadData() { return _memDb; }
+    function saveData(d) { _memDb = d; }
 
-    function loadDeletedStudents() {
-      try { return JSON.parse(localStorage.getItem('deleted_students') || '[]'); } catch { return []; }
-    }
-    function saveDeletedStudents(arr) { localStorage.setItem('deleted_students', JSON.stringify(arr)); }
+    function loadExtraStudents() { return _memExtra; }
+    function saveExtraStudents(obj) { _memExtra = obj; }
 
-    // Call once at boot (and after cloud pull) to rebuild CLASSES.students from localStorage
+    function loadDeletedStudents() { return _memDeleted; }
+    function saveDeletedStudents(arr) { _memDeleted = arr; }
+
+    // Call once at boot (and after cloud pull) to rebuild CLASSES.students from in-memory store
     function applyStoredStudents() {
       const extra = loadExtraStudents();   // { cid: [name, ...] }
       const deleted = loadDeletedStudents(); // ["cid::name", ...]
@@ -2165,7 +2164,6 @@
     // ═══════════════════════════════════════════════════════════════════
     // STATE
     // ═══════════════════════════════════════════════════════════════════
-    applyStoredStudents(); // merge persisted additions/deletions into CLASSES
     let db = loadData();
     let currentClassId = null;
     let currentTab = 'attend';
@@ -2229,9 +2227,8 @@
           headers: { 'Range': '0-999' }
         });
 
+        const cloudDb = {};
         if (rows && rows.length) {
-          // Rebuild db from cloud rows
-          const cloudDb = {};
           rows.forEach(row => {
             const cid = row.class_id;
             const date = row.session_date;
@@ -2240,44 +2237,31 @@
             cloudDb[cid][date] = row.statuses || {};
             if (row.times) cloudDb[cid + '_times'][date] = row.times;
           });
-
-          // Deep merge: cloud wins on any date both have; local-only dates are preserved.
-          const local = loadData();
-          db = { ...local };
-          CLASSES.forEach(cls => {
-            if (cloudDb[cls.id]) {
-              db[cls.id] = Object.assign({}, local[cls.id] || {}, cloudDb[cls.id]);
-            }
-            if (cloudDb[cls.id + '_times']) {
-              db[cls.id + '_times'] = Object.assign({}, (local[cls.id + '_times'] || {}), cloudDb[cls.id + '_times']);
-            }
-          });
-          saveData(db);
         }
+        // Cloud is the single source of truth — replace in-memory db entirely
+        saveData(cloudDb);
+        db = loadData(); // keep live `db` variable in sync
 
-        // ── 2. Always pull students & deletions (even if no attendance yet) ──
+        // ── 2. Always pull students & deletions ──────────────────────────
         try {
           const [studentRows, deletedRows] = await Promise.all([
             sbFetch('extra_students?select=*'),
             sbFetch('deleted_students?select=*').catch(() => [])
           ]);
 
-          // Apply deleted students from cloud first
-          const deletedLocal = loadDeletedStudents();
+          // Build deleted list from cloud
+          const newDeleted = [];
           if (deletedRows && deletedRows.length) {
             deletedRows.forEach(row => {
-              if (!deletedLocal.includes(row.student_key)) deletedLocal.push(row.student_key);
+              if (!newDeleted.includes(row.student_key)) newDeleted.push(row.student_key);
             });
-            saveDeletedStudents(deletedLocal);
           }
+          saveDeletedStudents(newDeleted);
 
-          // Apply extra students (skip deleted ones), persist to localStorage
-          // Build fresh from cloud — do NOT merge with stale local data,
-          // otherwise names deleted in another browser survive here.
+          // Build extra students from cloud (cloud wins, no local merge)
           const freshExtra = {};
           if (studentRows && studentRows.length) {
             const deleted = loadDeletedStudents();
-            // Deduplicate by class_id+name in case old duplicate rows exist in DB
             const seen = new Set();
             studentRows.forEach(row => {
               const key = row.class_id + '::' + row.name;
@@ -2290,7 +2274,7 @@
           }
           saveExtraStudents(freshExtra);
 
-          // Rebuild CLASSES.students cleanly from localStorage
+          // Rebuild CLASSES.students cleanly from in-memory store
           const deletedFinal = loadDeletedStudents();
           const extraFinal = loadExtraStudents();
           CLASSES.forEach(cls => {
@@ -2366,10 +2350,8 @@
     // ═══════════════════════════════════════════════════════════════════
     // PROFILE DATA (cloud-synced via Supabase)
     // ═══════════════════════════════════════════════════════════════════
-    function loadProfiles() {
-      try { return JSON.parse(localStorage.getItem('student_profiles') || '{}'); } catch { return {}; }
-    }
-    function saveProfiles(p) { localStorage.setItem('student_profiles', JSON.stringify(p)); }
+    function loadProfiles() { return _memProfiles; }
+    function saveProfiles(p) { _memProfiles = p; }
 
     async function pushProfileToCloud(studentKey, profileData) {
       try {
@@ -2386,9 +2368,9 @@
       try {
         const rows = await sbFetch('student_profiles?select=*');
         if (!rows || !rows.length) return;
-        const local = loadProfiles();
-        rows.forEach(row => { local[row.student_key] = row.profile; });
-        saveProfiles(local);
+        const fresh = {};
+        rows.forEach(row => { fresh[row.student_key] = row.profile; });
+        saveProfiles(fresh);
       } catch (e) { /* table may not exist yet */ }
     }
 
@@ -2401,7 +2383,7 @@
       const profiles = loadProfiles();
       profiles[getProfileKey(cid, name)] = data;
       saveProfiles(profiles);
-      pushProfileToCloud(getProfileKey(cid, name), data);
+      // Note: caller is responsible for calling pushProfileToCloud when needed
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -3359,7 +3341,7 @@
       showModal(
         '<div class="modal-icon">✅</div>' +
         '<div class="modal-title">تم حفظ الحضور!</div>' +
-        '<div class="modal-body">سجل <strong style="color:white">' + clsName + '</strong> محفوظ محلياً.<br><span id="cloud-save-status" style="font-size:11px;color:var(--muted)">☁️ جارٍ المزامنة السحابية…</span></div>' +
+        '<div class="modal-body">سجل <strong style="color:white">' + clsName + '</strong>.<br><span id="cloud-save-status" style="font-size:11px;color:var(--muted)">☁️ جارٍ المزامنة السحابية…</span></div>' +
         '<button class="modal-btn primary" id="save-done-btn" style="margin-bottom:8px">تم ✓</button>' +
         '<button class="modal-btn secondary" id="save-view-btn">View Sessions</button>'
       );
@@ -3381,7 +3363,7 @@
         if (el) el.innerHTML = '☁️ <span style="color:var(--green)">تمت المزامنة ✓</span>';
       } catch (e) {
         const el = document.getElementById('cloud-save-status');
-        if (el) el.innerHTML = '⚠️ <span style="color:var(--amber)">محفوظ محلياً فقط (بدون اتصال)</span>';
+        if (el) el.innerHTML = '❌ <span style="color:var(--red)">فشلت المزامنة — تحقق من الاتصال</span>';
       }
     }
 
@@ -3516,22 +3498,36 @@
     }
 
     async function deleteSession(cid, date) {
-      // Remove locally
+      // Remove from in-memory immediately so UI feels instant
       db = loadData();
       if (db[cid]) {
         delete db[cid][date];
         if (db[cid + '_times']) delete db[cid + '_times'][date];
         saveData(db);
       }
+
       // Remove from cloud
+      let cloudOk = false;
       try {
         await sbFetch('attendance?class_id=eq.' + encodeURIComponent(cid) + '&session_date=eq.' + encodeURIComponent(date), {
           method: 'DELETE',
           prefer: 'return=minimal',
           headers: { 'Prefer': 'return=minimal' }
         });
-      } catch (e) { console.warn('Cloud session delete failed:', e); }
-      // Refresh UI — be safe about which screen is active
+        cloudOk = true;
+      } catch (e) {
+        console.warn('Cloud session delete failed:', e);
+      }
+
+      // Pull fresh state from cloud to confirm deletion propagated
+      // (also ensures other tabs/devices that miss the WS DELETE event stay in sync)
+      try {
+        setSyncStatus('syncing');
+        await pullAll();
+        setSyncStatus('ok');
+      } catch (e) { setSyncStatus('error'); }
+
+      // Refresh UI
       const active = document.querySelector('.screen.active');
       const aid = active ? active.id : '';
       if (aid === 'screen-class' && currentClassId === cid) {
@@ -3542,7 +3538,6 @@
       } else if (aid === 'screen-history') {
         openGlobalHistory();
       } else {
-        // Fallback: re-open the session choice for this class
         currentClassId = cid;
         renderSessionChoice(cid);
       }
@@ -4028,14 +4023,13 @@
       fallbackInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
         if (realtimeOk) { clearInterval(fallbackInterval); fallbackInterval = null; return; }
-        // Don't flash the syncing animation if user is actively typing/working
         if (!_userIsWorking) setSyncStatus('syncing');
         try {
           await pullAll();
           if (!_userIsWorking) setSyncStatus('ok');
         }
         catch (e) { if (!_userIsWorking) setSyncStatus('error'); }
-      }, 15000);
+      }, 10000);
     }
 
     // ── Background safety-net poll: every 30s even when WebSocket is up ─
@@ -4043,9 +4037,8 @@
       if (bgPollInterval) return;
       bgPollInterval = setInterval(async function () {
         if (document.visibilityState !== 'visible') return;
-        // Silent pull — never triggers sync animation during background polls
         try { await pullAll(); } catch (e) { /* silent */ }
-      }, 30000);
+      }, 20000);
     }
 
     // ── Sync immediately when tab becomes visible ───────────────────────
@@ -4513,7 +4506,7 @@
       const cls = CLASSES.find(c => c.id === cid);
       const si = cls.students.indexOf(name);
       const color = AV_COLORS[(si >= 0 ? si : 0) % AV_COLORS.length];
-      const profile = getProfile(cid, name);  // always fresh from localStorage
+      const profile = getProfile(cid, name);  // always fresh from in-memory store
       const totalAbs = getAllAbsences(cid, name);
       const totalSessions = Object.keys(getClassRecord(cid)).length;
 
@@ -4610,18 +4603,17 @@
         notes: (document.getElementById('pf-notes') || {}).value || '',
       };
 
-      // 1. Save locally first (instant)
-      setProfile(cid, name, updated);
-
-      // 2. Visual feedback — saving
+      // Visual feedback — saving
       const btn = document.getElementById('profile-save-btn');
       const status = document.getElementById('profile-sync-status');
       if (btn) { btn.textContent = '⏳ جارٍ الحفظ…'; btn.disabled = true; }
       if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = '☁️ جارٍ المزامنة مع السحابة…'; }
 
-      // 3. Push to cloud
+      // Push to cloud, then update in-memory store
       try {
         await pushProfileToCloud(getProfileKey(cid, name), updated);
+        // Update in-memory store after successful cloud write
+        setProfile(cid, name, updated);
         if (btn) {
           btn.textContent = '✅ تم الحفظ والمزامنة!';
           btn.style.background = 'linear-gradient(135deg,var(--green),#16a34a)';
@@ -4630,15 +4622,14 @@
         if (status) { status.style.color = 'var(--green)'; status.textContent = '☁️ تمت المزامنة السحابية ✓'; }
       } catch (e) {
         if (btn) {
-          btn.textContent = '✅ محفوظ محلياً';
-          btn.style.background = 'linear-gradient(135deg,var(--amber),#d97706)';
+          btn.textContent = '❌ فشل الحفظ — تحقق من الاتصال';
+          btn.style.background = 'linear-gradient(135deg,var(--red),#b91c1c)';
           btn.disabled = false;
         }
-        if (status) { status.style.color = 'var(--amber)'; status.textContent = '⚠️ محفوظ محلياً فقط (بدون اتصال)'; }
+        if (status) { status.style.color = 'var(--red)'; status.textContent = '❌ تعذّر الحفظ (بدون اتصال)'; }
       }
 
-      // Refresh the home profiles section if it's unlocked and visible,
-      // so the "مكتمل/فارغ" badge and any displayed data stay in sync.
+      // Refresh the home profiles section if it's unlocked and visible
       if (profilesSectionUnlocked) {
         const profilesDiv = document.getElementById('home-profiles');
         if (profilesDiv && profilesDiv.style.display !== 'none') {
@@ -4673,8 +4664,8 @@
       lines.push('الحالة: ' + wsStatus + (realtimeOk ? ' ✅' : ' ❌'));
       lines.push('');
 
-      // 2. LocalStorage
-      lines.push('━━━ التخزين المحلي ━━━');
+      // 2. In-memory store
+      lines.push('━━━ البيانات في الذاكرة ━━━');
       const extra = loadExtraStudents();
       const deleted = loadDeletedStudents();
       lines.push('extra_students: ' + JSON.stringify(extra, null, 2));
@@ -4760,20 +4751,11 @@
     }
 
     async function init() {
-      // One-time migration: clear locally-cached students from old hardcoded lists.
-      const MIGRATION_KEY = 'migration_clear_hardcoded_v1';
-      if (!localStorage.getItem(MIGRATION_KEY)) {
-        localStorage.removeItem('extra_students');
-        localStorage.removeItem('deleted_students');
-        localStorage.removeItem('seed_version');
-        localStorage.setItem(MIGRATION_KEY, '1');
-      }
-
-      // 1. Show whatever is in localStorage immediately (fast first paint)
+      // Show skeleton home immediately (db is empty until cloud pull completes)
       renderHome();
       setSyncStatus('syncing');
 
-      // 2. Pull everything from cloud with retry logic (critical for mobile)
+      // Pull everything from Supabase with retry logic (critical for mobile)
       let pulled = false;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -4790,7 +4772,7 @@
       }
       if (!pulled) setSyncStatus('error');
 
-      // 3. Start live sync — WebSocket + background safety-net poll
+      // Start live sync — WebSocket + background safety-net poll
       startSyncPoll();
     }
     init();
