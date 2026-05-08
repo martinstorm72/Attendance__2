@@ -4289,6 +4289,39 @@
           editField(pfx + 'hobby', '\ud83c\udfaf', '\u0627\u0644\u0647\u0648\u0627\u064a\u0629', profile.hobby, 'text', 'rtl') +
           editField(pfx + 'parentName', '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67', '\u0627\u0633\u0645 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentName, 'text', 'rtl') +
           editField(pfx + 'parentPhone', '\ud83d\udcde', '\u0631\u0642\u0645 \u0647\u0627\u062a\u0641 \u0648\u0644\u064a \u0627\u0644\u0623\u0645\u0631', profile.parentPhone, 'tel', 'ltr') +
+
+          // ── Notes Section (collapsible) ──
+          '<div style="margin-top:10px;border-radius:10px;border:1.5px solid rgba(79,142,247,0.3);overflow:hidden">' +
+          '<div id="' + rowId + '-notes-toggle" onclick="togglePubNotes(\'' + rowId + '\')" ' +
+          'style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer;' +
+          'background:rgba(79,142,247,0.07);user-select:none;">' +
+          '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size:14px">\ud83d\udcdd</span>' +
+          '<span style="font-size:12px;font-weight:700;color:var(--accent)">\u0645\u0644\u0627\u062d\u0638\u0627\u062a</span>' +
+          (profile.notes ? '<span style="font-size:10px;background:var(--accent);color:white;padding:1px 7px;border-radius:8px;font-weight:700">\u064a\u0648\u062c\u062f \u0645\u062d\u062a\u0648\u0649</span>' : '') +
+          '</div>' +
+          '<svg id="' + rowId + '-notes-chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.25s"><polyline points="6 9 12 15 18 9"/></svg>' +
+          '</div>' +
+          '<div id="' + rowId + '-notes-panel" style="max-height:0;overflow:hidden;transition:max-height 0.35s cubic-bezier(0.16,1,0.3,1)">' +
+          '<div style="padding:10px 12px 12px" onclick="event.stopPropagation()">' +
+          '<textarea id="' + pfx + 'notes" ' +
+          'style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;' +
+          'padding:9px 11px;color:var(--white);font-size:13px;font-weight:600;font-family:\'Cairo\',\'Tajawal\',sans-serif;' +
+          'outline:none;direction:rtl;resize:vertical;min-height:90px;line-height:1.8;' +
+          'transition:border-color 0.15s;" ' +
+          'onfocus="this.style.borderColor=\'rgba(79,142,247,0.6)\'" ' +
+          'onblur="this.style.borderColor=\'rgba(255,255,255,0.12)\'" ' +
+          'placeholder="\u0623\u0636\u0641 \u0645\u0644\u0627\u062d\u0638\u0627\u062a\u2026">' + (profile.notes || '') + '</textarea>' +
+          '<button onclick="transferNotesToPrivate(\'' + safeC + '\',\'' + safeN + '\',\'' + pfx + '\',\'' + rowId + '\')" ' +
+          'style="margin-top:8px;width:100%;padding:9px;border-radius:8px;background:rgba(245,200,66,0.12);' +
+          'border:1px solid rgba(245,200,66,0.35);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer;' +
+          'font-family:\'Cairo\',\'Tajawal\',sans-serif;display:flex;align-items:center;justify-content:center;gap:6px">' +
+          '<span>\ud83d\udd12</span>\u0646\u0642\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u0644\u0641 \u0627\u0644\u0633\u0631\u064a' +
+          '</button>' +
+          '</div>' +
+          '</div>' +
+          '</div>' +
+
           // save + delete buttons
           '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">' +
           '<button id="' + rowId + '-savebtn" ' +
@@ -4397,6 +4430,7 @@
         hobby: (document.getElementById(pfx + 'hobby') || {}).value || '',
         parentName: (document.getElementById(pfx + 'parentName') || {}).value || '',
         parentPhone: (document.getElementById(pfx + 'parentPhone') || {}).value || '',
+        notes: (document.getElementById(pfx + 'notes') || {}).value || '',
       };
 
       // merge with existing (keep notes etc.)
@@ -4440,7 +4474,57 @@
       }, 3000);
     }
 
-    function togglePublicProfiles() {
+    function togglePubNotes(rowId) {
+      var panel = document.getElementById(rowId + '-notes-panel');
+      var chevron = document.getElementById(rowId + '-notes-chevron');
+      if (!panel) return;
+      var isOpen = panel.style.maxHeight && panel.style.maxHeight !== '0px';
+      if (isOpen) {
+        panel.style.maxHeight = '0';
+        if (chevron) chevron.style.transform = 'rotate(0deg)';
+      } else {
+        panel.style.maxHeight = (panel.scrollHeight + 300) + 'px';
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+        var parentPanel = document.getElementById(rowId);
+        if (parentPanel) parentPanel.style.maxHeight = (parentPanel.scrollHeight + 400) + 'px';
+      }
+    }
+
+    async function transferNotesToPrivate(cid, name, pfx, rowId) {
+      var notesEl = document.getElementById(pfx + 'notes');
+      if (!notesEl) return;
+      var notesVal = notesEl.value || '';
+      if (!notesVal.trim()) {
+        var status = document.getElementById(rowId + '-status');
+        if (status) {
+          status.style.display = 'block';
+          status.style.color = 'var(--amber)';
+          status.textContent = '\u26a0\ufe0f \u0644\u0627 \u062a\u0648\u062c\u062f \u0645\u0644\u0627\u062d\u0638\u0627\u062a \u0644\u0644\u0646\u0642\u0644';
+          setTimeout(function () { status.style.display = 'none'; }, 2500);
+        }
+        return;
+      }
+      var existing = getProfile(cid, name);
+      var updated = Object.assign({}, existing, { notes: notesVal });
+      setProfile(cid, name, updated);
+
+      var status = document.getElementById(rowId + '-status');
+      if (status) { status.style.display = 'block'; status.style.color = 'var(--muted)'; status.textContent = '\u2601\ufe0f \u062c\u0627\u0631\u064a\u064b \u0627\u0644\u0646\u0642\u0644 \u0648\u0627\u0644\u062d\u0641\u0638\u2026'; }
+
+      try {
+        await pushProfileToCloud(getProfileKey(cid, name), updated);
+        if (status) { status.style.color = 'var(--green)'; status.textContent = '\ud83d\udd12 \u062a\u0645 \u0627\u0644\u0646\u0642\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u0644\u0641 \u0627\u0644\u0633\u0631\u064a \u2713'; }
+        notesEl.value = '';
+      } catch (e) {
+        if (status) { status.style.color = 'var(--amber)'; status.textContent = '\u26a0\ufe0f \u0645\u062d\u0641\u0648\u0638 \u0645\u062d\u0644\u064a\u064b\u0627 \u0641\u0642\u0637 (\u0628\u062f\u0648\u0646 \u0627\u062a\u0635\u0627\u0644)'; }
+      }
+
+      setTimeout(function () {
+        if (status) status.style.display = 'none';
+      }, 3000);
+    }
+
+        function togglePublicProfiles() {
       pubProfilesExpanded = !pubProfilesExpanded;
       renderHomePublicProfiles();
     }
